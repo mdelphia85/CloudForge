@@ -13,7 +13,7 @@ A domain is not required for development or on-prem installation. DNS and TLS ar
 
 ## Current state
 
-The inventory screen is a frontend prototype with sample records. The API and persistence layer are intentionally not connected yet. The health endpoint at `/api/health` is the first runtime boundary.
+The inventory workspace is backed by PostgreSQL through the `/api/inventory` and `/api/inventory/movements` route handlers. Local accounts use database-backed sessions; inventory writes are role-checked and transactionally recorded in append-only movement and audit tables. This implementation is single-organization per deployment; tenant isolation and organization switching are not implemented, so multiple customers must not share a database. Other ERP screens, industrial integrations, synchronization, and AI are not implemented. Local authentication does not yet include MFA, password recovery, session revocation, or login throttling.
 
 ## Target shape
 
@@ -99,9 +99,10 @@ Produce a signed release bundle containing container images, SBOM, migration fil
 
 ## Immediate implementation sequence
 
-1. Add a backend module boundary and PostgreSQL migration tooling.
-2. Add authentication and authorization before exposing mutating inventory actions.
-3. Replace sample inventory with item, stock, movement, location, and audit APIs.
-4. Add an outbox/inbox sync engine and offline local queue.
-5. Add deployment manifests, backup/restore tests, security scans, and operational runbooks.
-6. Perform a formal control mapping and independent assessment for the target contract and environment.
+1. Add organization and tenant isolation before sharing a database across customers; cover it with authorization integration tests.
+2. Add integration tests against a real PostgreSQL service, plus backup/restore and migration rollback procedures.
+3. Harden local account operations with login throttling, password reset/recovery, session revocation, and account lifecycle controls.
+4. Add an outbox/inbox sync engine and explicit offline conflict handling before enabling offline writes.
+5. Complete deployment manifests, signed air-gapped release bundles, security scans, and operational runbooks.
+6. Add the next ERP domains on the established authorization, audit, and data boundaries.
+7. Perform a formal control mapping and independent assessment for the target contract and environment.
