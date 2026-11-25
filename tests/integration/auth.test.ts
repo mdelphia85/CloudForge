@@ -197,6 +197,43 @@ describe("login and logout", () => {
     expect(actions.rows.map((r) => r.action)).toEqual(expect.arrayContaining(["auth.bootstrap", "auth.login", "auth.logout", "user.bootstrap"]));
   });
 
+  it("throttles repeated failed sign-in attempts and releases the lock after expiry", async () => {
+    await testPool().query("DELETE FROM auth_login_attempts");
+
+    for (let i = 0; i < 7; i++) {
+      const result = await login({ email: "owner@example.test", password: "Wrong-Password-123!" });
+      expect(result.status).toBe(401);
+    }
+
+    const eighth = await login({ email: "owner@example.test", password: "Wrong-Password-123!" });
+    expect(eighth.status).toBe(429);
+    expect(eighth.body.code).toBe("TOO_MANY_ATTEMPTS");
+
+    const correctBlocked = await login({ email: "owner@example.test", password: STRONG_PASSWORD });
+    expect(correctBlocked.status).toBe(429);
+    expect(correctBlocked.sessionCookie).toBeNull();
+
+    await testPool().query(
+      "UPDATE auth_login_attempts SET blocked_until = now() - interval '1 minute', " +
+      "window_started_at = now() - interval '11 minutes'",
+    );
+
+    const success = await login({ email: "owner@example.test", password: STRONG_PASSWORD });
+    expect(success.status).toBe(200);
+    const count = await testPool().query("SELECT count(*)::int AS n FROM auth_login_attempts");
+    expect(count.rows[0].n).toBe(0);
+  });
+
+  it("applies the same throttling to unknown accounts without revealing whether an account exists", async () => {
+    const email = "unknown-throttled@example.test";
+    for (let i = 0; i < 7; i++) {
+      const response = await login({ email, password: "Wrong-Password-123!" });
+      expect(response.status).toBe(401);
+    }
+    const response = await login({ email, password: "Wrong-Password-123!" });
+    expect(response.status).toBe(429);
+    expect(response.body.code).toBe("TOO_MANY_ATTEMPTS");
+  });
+
   it.todo("records failed login attempts in the audit log (not implemented - see Phase 1 report)");
-  it.todo("throttles repeated failed logins (not implemented - see Phase 1 report)");
 });
