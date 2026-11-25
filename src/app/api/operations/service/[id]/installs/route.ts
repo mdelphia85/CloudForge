@@ -32,7 +32,7 @@ export async function POST(request:Request,{params}:Context) {
     const outcome=body.result;
     if(typeof outcome!=="string"||!["installed","failed","rolled_back"].includes(outcome))
       throw new HttpError(400,"INVALID_RESULT","Choose installed, failed, or rolled_back.");
-    const notes=body.notes===undefined ? "" : shortText(body.notes,"notes",1000);
+    const notes=body.notes===undefined || body.notes==="" ? "" : shortText(body.notes,"notes",1000);
     const result=await inTransaction(async client=>{
       const found=await client.query<{asset_id:string;project_id:string|null;status:string}>(
         "SELECT asset_id,project_id,status FROM field_service_jobs WHERE id=$1 FOR UPDATE",[jobId],
