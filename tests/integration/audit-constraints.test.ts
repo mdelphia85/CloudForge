@@ -73,7 +73,7 @@ describe("audit trail coverage", () => {
 
 describe("append-only protection", () => {
   it.each(["inventory_movements", "audit_events"])("blocks UPDATE, DELETE and TRUNCATE on %s", async (table) => {
-    for (const sql of [`UPDATE ${table} SET id = id`, `DELETE FROM ${table}`, `TRUNCATE ${table}`]) {
+    for (const sql of [`UPDATE ${table} SET id = id`, `DELETE FROM ${table}`, `TRUNCATE ${table} CASCADE`]) {
       const error = await rejects(sql);
       expect(error.message, sql).toMatch(/append-only/);
     }
@@ -158,7 +158,7 @@ describe("uniqueness and referential integrity", () => {
 describe("migrations", () => {
   it("records the foundation migration and reapplying is a no-op", async () => {
     const applied = await testPool().query("SELECT name FROM schema_migrations ORDER BY name");
-    expect(applied.rows.map((r) => r.name)).toEqual(["001_inventory_foundation.sql", "002_auth_login_attempts.sql"]);
+    expect(applied.rows.map((r) => r.name)).toEqual(["001_inventory_foundation.sql", "002_auth_login_attempts.sql", "003_phase2_operations.sql"]);
     const again = runMigrations();
     expect(again.status).toBe(0);
     expect(again.output).not.toMatch(/Applied/);
@@ -167,7 +167,7 @@ describe("migrations", () => {
   it("creates the expected tables and indexes", async () => {
     const tables = await testPool().query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
     expect(tables.rows.map((r) => r.table_name)).toEqual([
-      "audit_events", "auth_login_attempts", "inventory_items", "inventory_movements", "inventory_stock", "schema_migrations", "sessions", "users",
+      "audit_events", "auth_login_attempts", "engineering_assets", "engineering_bom_lines", "engineering_documents", "engineering_revisions", "field_program_installs", "field_service_jobs", "inventory_items", "inventory_movements", "inventory_stock", "production_events", "production_jobs", "project_tasks", "projects", "purchase_requests", "schema_migrations", "sessions", "users",
     ]);
     const indexes = await testPool().query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
     const names = indexes.rows.map((r) => r.indexname);

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive, Boxes, ChevronDown, CircleAlert, ClipboardList, FileClock, LogOut,
-  MapPin, Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
+  Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
 } from "lucide-react";
 
 type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer" };
@@ -199,8 +199,11 @@ export default function InventoryWorkspace() {
         <nav className="main-nav" aria-label="Main navigation">
           <p className="nav-label">Available</p>
           <button className="nav-item active"><Package size={17} /><span>Inventory</span><span className="nav-count">{items.length}</span></button>
-          <p className="nav-label nav-label-spaced">Planned modules</p>
-          {[["Purchasing", ClipboardList], ["Work orders", Wrench], ["Locations", MapPin], ["Field service", Truck]].map(([label, Icon]) => (
+          <p className="nav-label nav-label-spaced">Live core modules</p>
+          <a className="nav-item" href="/operations"><ClipboardList size={17} /><span>Projects & engineering</span></a>
+          <a className="nav-item" href="/operations"><Wrench size={17} /><span>Production & field service</span></a>
+          <p className="nav-label nav-label-spaced">Future integrations</p>
+          {[["PLC live monitoring", Wrench], ["SOP builder", ClipboardList], ["Remote diagnostics", Truck]].map(([label, Icon]) => (
             <button className="nav-item" key={label as string} disabled title="Not connected to backend yet">
               <Icon size={17} /><span>{label as string}</span>
             </button>
