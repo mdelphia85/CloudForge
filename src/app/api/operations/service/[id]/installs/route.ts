@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireRole, requireUser } from "@/server/auth";
+import { randomUUID } from "node:crypto";
+import { requireUser } from "@/server/auth";
 import { getPool,inTransaction } from "@/server/db";
 import { errorResponse,HttpError,readJson,requireSameOrigin } from "@/server/errors";
 import { audit,operationsError,requireUuid,shortText } from "@/server/operations";
@@ -24,20 +25,41 @@ export async function POST(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
-    requireRole(user,"admin","operator");
     const {id}=await params;
     const jobId=requireUuid(id);
     const body=await readJson(request);
     const revisionId=requireUuid(body.revisionId,"revision ID");
+    const idempotencyKey=body.idempotencyKey===undefined
+      ? randomUUID()
+      : shortText(body.idempotencyKey,"idempotencyKey",128);
+    if(idempotencyKey.length<8)
+      throw new HttpError(400,"INVALID_KEY","An idempotency key of at least 8 characters is required.");
     const outcome=body.result;
     if(typeof outcome!=="string"||!["installed","failed","rolled_back"].includes(outcome))
       throw new HttpError(400,"INVALID_RESULT","Choose installed, failed, or rolled_back.");
     const notes=body.notes===undefined || body.notes==="" ? "" : shortText(body.notes,"notes",1000);
     const result=await inTransaction(async client=>{
-      const found=await client.query<{asset_id:string;project_id:string|null;status:string}>(
-        "SELECT asset_id,project_id,status FROM field_service_jobs WHERE id=$1 FOR UPDATE",[jobId],
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",["field-program-install:"+idempotencyKey]);
+      const found=await client.query<{asset_id:string;project_id:string|null;status:string;assigned_to:string|null}>(
+        "SELECT asset_id,project_id,status,assigned_to FROM field_service_jobs WHERE id=$1 FOR UPDATE",[jobId],
       );
       if(!found.rowCount) throw new HttpError(404,"NOT_FOUND","Service job not found.");
+      if(user.role==="viewer"&&found.rows[0].assigned_to!==user.id)
+        throw new HttpError(403,"FORBIDDEN","Only the assigned field technician can record this installation.");
+      if(user.role!=="viewer"&&user.role!=="admin"&&user.role!=="operator")
+        throw new HttpError(403,"FORBIDDEN","You do not have permission to record this installation.");
+      const previous=await client.query<{
+        id:string;service_job_id:string;revision_id:string;result:string;notes:string;
+      }>(
+        "SELECT id,service_job_id,revision_id,result,notes FROM field_program_installs WHERE idempotency_key=$1",
+        [idempotencyKey],
+      );
+      if(previous.rowCount) {
+        const row=previous.rows[0];
+        if(row.service_job_id!==jobId||row.revision_id!==revisionId||row.result!==outcome||row.notes!==notes)
+          throw new HttpError(409,"KEY_REUSED","The idempotency key was already used for a different installation record.");
+        return {id:row.id,replayed:true};
+      }
       if(found.rows[0].status==="completed")
         throw new HttpError(409,"JOB_CLOSED","Cannot record an installation on a completed service job.");
       const rev=await client.query<{status:string;asset_id:string|null;project_id:string|null;kind:string}>(
@@ -54,14 +76,14 @@ export async function POST(request:Request,{params}:Context) {
       if(doc.asset_id!==job.asset_id && !(doc.asset_id===null && doc.project_id!==null && doc.project_id===job.project_id))
         throw new HttpError(409,"WRONG_EQUIPMENT","The approved program is not associated with this equipment or its project.");
       const inserted=await client.query<{id:string}>(
-        "INSERT INTO field_program_installs (service_job_id,revision_id,result,notes,performed_by) " +
-        "VALUES ($1,$2,$3,$4,$5) RETURNING id",
-        [jobId,revisionId,outcome,notes,user.id],
+        "INSERT INTO field_program_installs (service_job_id,revision_id,result,notes,performed_by,idempotency_key) " +
+        "VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+        [jobId,revisionId,outcome,notes,user.id,idempotencyKey],
       );
       await audit(client,user,"field_service.program_install_recorded","field_service_job",jobId,
         {revisionId,outcome,recordId:inserted.rows[0].id});
-      return {id:inserted.rows[0].id};
+      return {id:inserted.rows[0].id,replayed:false};
     });
-    return NextResponse.json(result,{status:201});
+    return NextResponse.json(result,{status:result.replayed?200:201});
   } catch(error) {return errorResponse(operationsError(error));}
 }

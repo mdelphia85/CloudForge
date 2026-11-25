@@ -228,7 +228,22 @@ export async function updateStatus(resource: Resource, id: string, next: unknown
     const old=found.rows[0].status;
     if (old === next) return {id,status:old};
     if (!allowed[old]?.includes(next)) throw new HttpError(409,"INVALID_TRANSITION","Status cannot change from "+old+" to "+next+".");
+    if (resource === "tasks" && next === "done") {
+      const pending = await client.query(
+        "SELECT 1 FROM project_task_dependencies d JOIN project_tasks prerequisite ON prerequisite.id=d.depends_on_task_id " +
+          "WHERE d.task_id=$1 AND prerequisite.status<>'done' LIMIT 1",
+        [id],
+      );
+      if (pending.rowCount) throw new HttpError(409,"DEPENDENCY_PENDING","Complete prerequisite tasks before marking this task done.");
+    }
     await client.query("UPDATE "+table+" SET status=$2"+(resource==="service"?"":",updated_at=now()")+" WHERE id=$1",[id,next]);
+    if (resource === "service") {
+      await client.query(
+        "INSERT INTO field_service_updates(service_job_id,update_type,status,notes,actor_id) " +
+          "VALUES($1,'status',$2,$3,$4)",
+        [id, next, `Status changed from ${old} to ${next} through operations.`, user.id],
+      );
+    }
     await audit(client,user,SPECS[resource].label+".status_changed",table,id,{from:old,to:next});
     return {id,status:next};
   });

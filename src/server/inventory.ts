@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import type { AuthenticatedUser } from "@/server/auth";
+import { deductAvailableStock } from "@/server/inventory-allocation";
 
 export type InventoryItem = {
   sku: string;
@@ -175,16 +176,14 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
         [itemId, input.location, input.bin, input.quantity, user.id],
       );
     } else if (input.type === "issue" || input.type === "transfer") {
-      const source = await client.query(
-        `UPDATE inventory_stock
-            SET on_hand = on_hand - $1, updated_at = now(), updated_by = $2
-          WHERE item_id = $3 AND location = $4 AND bin = $5 AND on_hand >= $1
-          RETURNING id`,
-        [input.quantity, user.id, itemId, input.sourceLocation, input.sourceBin],
+      await deductAvailableStock(
+        client,
+        itemId,
+        input.sourceLocation!,
+        input.sourceBin!,
+        input.quantity,
+        user.id,
       );
-      if (source.rowCount !== 1) {
-        throw new HttpError(409, "INSUFFICIENT_STOCK", "The source bin does not contain enough stock.");
-      }
       delta = `-${input.quantity}`;
       if (input.type === "transfer") {
         await client.query(
@@ -209,6 +208,14 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
       );
       if (currentBalance.rowCount !== 1) {
         throw new HttpError(404, "STOCK_NOT_FOUND", "No stock balance exists at that location and bin.");
+      }
+      const reservations = await client.query<{ sufficient: boolean }>(
+        "SELECT $1::numeric >= COALESCE(SUM(quantity-consumed_qty),0) AS sufficient " +
+          "FROM inventory_reservations WHERE item_id=$2 AND location=$3 AND bin=$4 AND status='reserved'",
+        [input.quantity, itemId, input.location, input.bin],
+      );
+      if (!reservations.rows[0].sufficient) {
+        throw new HttpError(409, "COUNT_BELOW_RESERVED", "A count cannot reduce stock below active reservations.");
       }
       await client.query(
         `UPDATE inventory_stock

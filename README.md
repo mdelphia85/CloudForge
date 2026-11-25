@@ -6,6 +6,10 @@ Inventory uses PostgreSQL-backed records, local password accounts, server-side r
 
 The operations workspace supports project tasks, equipment and BOM records, purchasing requests, and production jobs. Engineering users can upload PLC/HMI program revisions and administrators can approve releases; authorized administrators and operators can download approved releases, while field-service records capture installations. Production material issues update stock, movement history, production events, and audit history in one transaction.
 
+Phase 3 adds supplier-backed purchase orders and receiving, project/job material reservations and shortage visibility, revisioned BOMs and engineering change approval, production work-center/shift/operator assignments and downtime, project milestones/dependencies/resources/costs, and field-service part usage/returns and work logs. These workflows share PostgreSQL records and update inventory transactionally. A field technician assigned to an open service work order can download only approved PLC/HMI programs associated with that equipment or project and record the installation outcome. Open `/operations/phase3` for the Phase 3 workspace; the existing inventory and Phase 2 workspaces remain available.
+
+These are operational workflows, not a production-launch claim: there is no offline mutation/synchronization queue, live PLC/HMI transfer, automatic production scheduling, or multi-organization tenant isolation.
+
 This first slice is for one organization per deployment. Do not place multiple customer organizations in one shared database/deployment; tenant isolation and organization switching are not implemented yet.
 
 See [docs/architecture.md](docs/architecture.md) for the deployment model, backend sequence, and compliance boundaries.

@@ -3,6 +3,7 @@ import { requireRole, requireUser } from "@/server/auth";
 import { inTransaction, getPool } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, positive, requireUuid, shortText } from "@/server/operations";
+import { deductAvailableStock } from "@/server/inventory-allocation";
 
 type Context = {params:Promise<{id:string}>};
 const KINDS = ["start","hold","resume","progress","scrap","complete","note","material"] as const;
@@ -60,8 +61,8 @@ export async function POST(request:Request,{params}:Context) {
           throw new HttpError(409,"KEY_REUSED","The idempotency key was already used for another event.");
         return {id:row.id,replayed:true};
       }
-      const found=await client.query<{status:string;job_code:string;planned_qty:string;completed_qty:string;scrap_qty:string}>(
-        "SELECT status,job_code,planned_qty::text,completed_qty::text,scrap_qty::text FROM production_jobs WHERE id=$1 FOR UPDATE",[jobId],
+      const found=await client.query<{status:string;job_code:string;planned_qty:string;completed_qty:string;scrap_qty:string;project_id:string}>(
+        "SELECT status,job_code,planned_qty::text,completed_qty::text,scrap_qty::text,project_id FROM production_jobs WHERE id=$1 FOR UPDATE",[jobId],
       );
       if(!found.rowCount) throw new HttpError(404,"NOT_FOUND","Production job not found.");
       const job=found.rows[0];
@@ -87,20 +88,22 @@ export async function POST(request:Request,{params}:Context) {
           "UPDATE production_jobs SET status='completed' WHERE id=$1 AND completed_qty+scrap_qty=planned_qty RETURNING id",[jobId],
         );
         if(!updated.rowCount) throw new HttpError(409,"INCOMPLETE_QTY","Record all produced or scrapped units before closing the job.");
+        await client.query(
+          "UPDATE production_job_assignments SET is_active=false,ended_at=now() WHERE production_job_id=$1 AND is_active",
+          [jobId],
+        );
       } else if(["start","hold","resume"].includes(action)) {
         const status=action==="hold"?"on_hold":"in_progress";
         await client.query("UPDATE production_jobs SET status=$2 WHERE id=$1",[jobId,status]);
       }
       if(action==="material") {
+        if(!sku||!location||!bin) throw new HttpError(400,"INVALID_MATERIAL","Material issues require an SKU, location, and bin.");
         const item=await client.query<{id:string}>("SELECT id FROM inventory_items WHERE sku=$1 AND is_active=true",[sku]);
         if(!item.rowCount) throw new HttpError(404,"SKU_NOT_FOUND","Inventory SKU not found.");
         itemId=item.rows[0].id;
-        const adjusted=await client.query(
-          "UPDATE inventory_stock SET on_hand=on_hand-$1::numeric,updated_at=now(),updated_by=$2 " +
-          "WHERE item_id=$3 AND location=$4 AND bin=$5 AND on_hand>=$1::numeric RETURNING id",
-          [quantity,user.id,itemId,location,bin],
-        );
-        if(!adjusted.rowCount) throw new HttpError(409,"INSUFFICIENT_STOCK","Insufficient stock in this location/bin.");
+        await deductAvailableStock(client,itemId,location,bin,quantity,user.id,{
+          kind:"production_job",id:jobId,projectId:job.project_id,
+        });
         const move=await client.query<{id:string}>(
           "INSERT INTO inventory_movements (item_id,movement_type,quantity_delta,from_location,from_bin,reference,actor_user_id,idempotency_key) " +
           "VALUES ($1,'issue',-$2::numeric,$3,$4,$5,$6,$7) RETURNING id",

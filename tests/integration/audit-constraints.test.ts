@@ -158,7 +158,10 @@ describe("uniqueness and referential integrity", () => {
 describe("migrations", () => {
   it("records the foundation migration and reapplying is a no-op", async () => {
     const applied = await testPool().query("SELECT name FROM schema_migrations ORDER BY name");
-    expect(applied.rows.map((r) => r.name)).toEqual(["001_inventory_foundation.sql", "002_auth_login_attempts.sql", "003_phase2_operations.sql"]);
+    expect(applied.rows.map((r) => r.name)).toEqual([
+      "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
+      "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
+    ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
     expect(again.output).not.toMatch(/Applied/);
@@ -167,7 +170,16 @@ describe("migrations", () => {
   it("creates the expected tables and indexes", async () => {
     const tables = await testPool().query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
     expect(tables.rows.map((r) => r.table_name)).toEqual([
-      "audit_events", "auth_login_attempts", "engineering_assets", "engineering_bom_lines", "engineering_documents", "engineering_revisions", "field_program_installs", "field_service_jobs", "inventory_items", "inventory_movements", "inventory_stock", "production_events", "production_jobs", "project_tasks", "projects", "purchase_requests", "schema_migrations", "sessions", "users",
+      "audit_events", "auth_login_attempts", "engineering_assets", "engineering_bom_lines",
+      "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
+      "engineering_change_links", "engineering_change_orders", "engineering_documents", "engineering_revisions",
+      "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
+      "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
+      "production_downtime", "production_events", "production_job_assignments", "production_jobs",
+      "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",
+      "project_milestones", "project_resources", "project_task_dependencies", "project_tasks",
+      "projects", "purchase_order_lines", "purchase_orders", "purchase_receipts", "purchase_requests",
+      "schema_migrations", "sessions", "suppliers", "users",
     ]);
     const indexes = await testPool().query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
     const names = indexes.rows.map((r) => r.indexname);
