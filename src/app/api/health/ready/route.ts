@@ -4,9 +4,10 @@ import { getPool } from "@/server/db";
 export async function GET() {
   try {
     const result = await getPool().query(
-      "SELECT 1 FROM schema_migrations WHERE name = '001_inventory_foundation.sql'",
+      "SELECT count(*)::int AS applied FROM schema_migrations " +
+      "WHERE name IN ('001_inventory_foundation.sql','002_auth_login_attempts.sql','003_phase2_operations.sql')",
     );
-    if (result.rowCount !== 1) {
+    if (result.rows[0]?.applied !== 3) {
       return NextResponse.json(
         { status: "not_ready", service: "cloud-forge" },
         { status: 503 },
