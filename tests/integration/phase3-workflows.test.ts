@@ -207,6 +207,21 @@ describe("Phase 3 cross-department workflows", () => {
     expect((await testPool().query(
       "SELECT count(*)::int AS n FROM engineering_change_approvals WHERE change_order_id=$1", [change.body.id],
     )).rows[0].n).toBe(3);
+    const listedChanges = await call(changeOrders.GET, {
+      cookie: actors.admin.cookie,
+      path: `/api/operations/engineering/change-orders?projectId=${projectId}`,
+    });
+    expect(listedChanges.body.changeOrders).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        changeNumber: "P3-ECO-001",
+        changeSummary: "Increase the specified fuse rating.",
+        approvals: expect.arrayContaining([
+          expect.objectContaining({ action: "submitted" }),
+          expect.objectContaining({ action: "approved" }),
+          expect.objectContaining({ action: "implemented" }),
+        ]),
+      }),
+    ]));
     const nextBom = await call(bomRevisions.POST, {
       method: "POST", cookie: actors.operator.cookie,
       body: { projectId, revisionCode: "B", changeNotes: "Approved follow-up", lines: [{ itemId, requiredQty: "12" }] },

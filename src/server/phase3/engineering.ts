@@ -122,6 +122,9 @@ export async function listChangeOrders(projectId?: string) {
       "COALESCE(jsonb_agg(jsonb_build_object('type',CASE WHEN l.document_id IS NOT NULL THEN 'document' " +
       "WHEN l.bom_revision_id IS NOT NULL THEN 'bomRevision' WHEN l.asset_id IS NOT NULL THEN 'asset' ELSE 'productionJob' END, " +
       "'id',COALESCE(l.document_id,l.bom_revision_id,l.asset_id,l.production_job_id)) ORDER BY l.created_at) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS links " +
+      ",(SELECT COALESCE(jsonb_agg(jsonb_build_object('action',h.action,'notes',h.notes,'actorName',a.display_name, " +
+      "'createdAt',h.created_at) ORDER BY h.created_at),'[]'::jsonb) FROM engineering_change_approvals h " +
+      "JOIN users a ON a.id=h.actor_id WHERE h.change_order_id=c.id) AS approvals " +
       "FROM engineering_change_orders c JOIN projects p ON p.id=c.project_id JOIN users u ON u.id=c.requested_by " +
       "LEFT JOIN engineering_assets a ON a.id=c.asset_id LEFT JOIN engineering_change_links l ON l.change_order_id=c.id " +
       "WHERE ($1::uuid IS NULL OR c.project_id=$1) GROUP BY c.id,p.code,a.asset_tag,u.display_name ORDER BY c.created_at DESC LIMIT 200",

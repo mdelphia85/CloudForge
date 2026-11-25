@@ -381,16 +381,37 @@ export default function Phase3Workspace() {
         </div>}
         <Panel title="BOM revision lifecycle"><Table rows={boms} columns={[
           ["projectCode","Project"],["revisionCode","Revision"],["status","Status"],["changeNotes","Change notes"],["createdBy","Created by"],["approvedAt","Approved"],
-        ]} actions={canEdit ? (row) => {
+        ]} actions={(row) => {
           const action = row.status === "draft" ? "submit" : row.status === "review" && user.role === "admin" ? "approve" : "";
-          return action ? <button onClick={() => void mutate(`/api/operations/engineering/bom-revisions/${row.id}/status`, { action }, `BOM ${action}ed.`)} className="text-teal-700 underline">{action}</button> : "—";
-        } : undefined}/></Panel>
+          return <div className="flex items-start gap-3">
+            {canEdit && action ? <button onClick={() => void mutate(`/api/operations/engineering/bom-revisions/${row.id}/status`, { action }, `BOM ${action === "submit" ? "submitted" : "approved"}.`)} className="text-teal-700 underline">{action}</button> : null}
+            <details><summary className="cursor-pointer text-teal-700">Lines</summary>
+              <Table rows={(row.lines as Row[]) ?? []} columns={[["sku","SKU"],["itemName","Item"],["requiredQty","Qty"],["notes","Notes"]]}/>
+            </details>
+          </div>;
+        }}/></Panel>
         <Panel title="Engineering change approval and implementation"><Table rows={changes} columns={[
           ["changeNumber","Change"],["projectCode","Project"],["title","Title"],["status","Status"],["requestedBy","Requested by"],["approvedAt","Approved"],
-        ]} actions={canEdit ? (row) => {
-          const action = row.status === "draft" ? "submit" : row.status === "review" && user.role === "admin" ? "approve" : row.status === "approved" && user.role === "admin" ? "implement" : "";
-          return action ? <button onClick={() => void mutate(`/api/operations/engineering/change-orders/${row.id}/action`, { action }, `Change ${action}ed.`)} className="text-teal-700 underline">{action}</button> : "—";
-        } : undefined}/></Panel>
+        ]} actions={(row) => {
+          const actions = row.status === "draft" ? ["submit"] : row.status === "review" && user.role === "admin" ?
+            ["approve", "reject"] : row.status === "approved" && user.role === "admin" ? ["implement"] : [];
+          const links = Array.isArray(row.links) ? row.links as Row[] : [];
+          return <div className="space-y-2">
+            {canEdit && actions.map((action) => <button key={action} onClick={() => void mutate(
+              `/api/operations/engineering/change-orders/${row.id}/action`, { action },
+              `Change ${action === "submit" ? "submitted" : action === "implement" ? "implemented" : action === "approve" ? "approved" : "rejected"}.`,
+            )} className="mr-2 text-teal-700 underline">{action}</button>)}
+            <details><summary className="cursor-pointer text-teal-700">Details / approval history</summary>
+              <div className="min-w-[320px] space-y-2 p-2 text-xs">
+                <p><strong>Reason:</strong> {value(row, "reason")}</p>
+                <p><strong>What changed:</strong> {value(row, "changeSummary")}</p>
+                <p><strong>Implementation:</strong> {value(row, "implementationNotes")}</p>
+                <p><strong>Linked records:</strong> {links.map((link) => `${value(link, "type")} ${value(link, "id")}`).join(", ") || "—"}</p>
+                <Table rows={(row.approvals as Row[]) ?? []} columns={[["action","Action"],["actorName","Actor"],["notes","Notes"],["createdAt","Date"]]}/>
+              </div>
+            </details>
+          </div>;
+        }}/></Panel>
         <p className="text-xs text-slate-500">PLC/HMI revisions, approval, downloads, and installation history remain available in the existing <Link className="text-teal-700 underline" href="/operations">Phase 2 engineering workspace</Link>.</p>
       </div>}
 
