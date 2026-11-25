@@ -162,14 +162,14 @@ export default function InventoryWorkspace() {
       <main className="auth-screen">
         <section className="auth-card">
           <span className="brand-mark"><Boxes size={20} /></span>
-          <p className="eyebrow">CloudForge · Local deployment</p>
+          <p className="eyebrow">CloudForge · Inventory pilot</p>
           <h1>{bootstrap ? "Set up your administrator" : setupRequired ? "Administrator setup is required" : "Sign in to CloudForge"}</h1>
           <p className="subtitle">
             {bootstrap
               ? "Create the first local administrator account for this installation."
               : setupRequired
                 ? "Configure DATABASE_URL, apply the database migration, and set a secure BOOTSTRAP_ADMIN_TOKEN to create the first account."
-                : "Use your CloudForge local account to access inventory."}
+                : "Sign in to your private CloudForge inventory workspace."}
           </p>
           {error && <div className="form-error" role="alert"><CircleAlert size={16} />{error}</div>}
           {(!setupRequired || bootstrap) && (
@@ -185,7 +185,7 @@ export default function InventoryWorkspace() {
             </form>
           )}
           {(error || (setupRequired && !setupEnabled)) && <button className="secondary-button" onClick={() => void loadSession()}><RefreshCw size={14} /> Retry connection</button>}
-          <div className="auth-security"><ShieldCheck size={15} /> Passwords and sessions are managed locally. No external identity provider is required.</div>
+          <div className="auth-security"><ShieldCheck size={15} /> Access is restricted to accounts created by your CloudForge administrator.</div>
         </section>
       </main>
     );
