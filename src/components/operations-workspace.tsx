@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
@@ -89,6 +91,7 @@ const Button=({children,disabled=false,onClick,type="button",tone="primary"}:{
   {children}</button>;
 
 export default function OperationsWorkspace(){
+  const router=useRouter();
   const [user,setUser]=useState<User|null>(null);
   const [loading,setLoading]=useState(true);
   const [overview,setOverview]=useState<Overview|null>(null);
@@ -226,7 +229,7 @@ export default function OperationsWorkspace(){
     <Panel className="max-w-md p-8 text-center"><ShieldCheck size={36} className="mx-auto text-teal-700 mb-4"/>
       <h1 className="text-2xl font-bold">CloudForge Operations</h1>
       <p className="text-slate-500 mt-3 mb-6">Sign in to access your organization&apos;s protected engineering and production records.</p>
-      <a href="/" className="text-teal-700 font-semibold underline">Go to sign in</a>
+      <Link href="/" className="text-teal-700 font-semibold underline">Go to sign in</Link>
       {error&&<p className="mt-3 text-rose-700">{error}</p>}
     </Panel>
   </main>;
@@ -235,7 +238,7 @@ export default function OperationsWorkspace(){
     <aside className="bg-[#16272b] text-slate-200 lg:w-64 shrink-0 p-5 flex flex-col gap-3">
       <div className="flex items-center gap-3 mb-6"><div className="p-2 bg-teal-200 text-teal-900 rounded-lg"><Boxes size={22}/></div>
         <div><strong className="block tracking-tight text-lg">CloudForge</strong><span className="text-[11px] text-slate-400">Industrial Operations</span></div></div>
-      <a href="/" className="flex items-center gap-2 p-3 text-sm rounded-md hover:bg-slate-700"><Package size={17}/> Inventory (Phase 1)</a>
+      <Link href="/" className="flex items-center gap-2 p-3 text-sm rounded-md hover:bg-slate-700"><Package size={17}/> Inventory (Phase 1)</Link>
       <div className="text-[10px] tracking-widest uppercase text-slate-500 font-bold mt-3 mb-1">Integrated operations</div>
       <nav className="flex flex-row lg:flex-col flex-wrap gap-1" aria-label="Operations modules">
         {ORDER.map(k=><button key={k} onClick={()=>{setActive(k);setShowForm(false);setError("");setNotice("");}}
@@ -251,7 +254,7 @@ export default function OperationsWorkspace(){
         <strong className="block">{user.displayName}</strong><span>{titleize(user.role)} · single-organization deployment</span>
         <button className="flex items-center gap-2 mt-3 text-slate-400 hover:text-white" onClick={()=>void perform(async()=>{
           await request("/api/auth/logout",{method:"POST"});
-          window.location.assign("/");
+          router.push("/");
         },"Signed out.")}><LogOut size={14}/> Sign out</button>
       </div>
     </aside>
