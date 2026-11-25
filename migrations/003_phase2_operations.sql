@@ -116,12 +116,17 @@ CREATE INDEX production_jobs_project_idx ON production_jobs(project_id,status);
 CREATE TABLE production_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   job_id uuid NOT NULL REFERENCES production_jobs(id) ON DELETE RESTRICT,
-  kind text NOT NULL CHECK (kind IN ('start','hold','resume','progress','scrap','complete','note')),
+  kind text NOT NULL CHECK (kind IN ('start','hold','resume','progress','scrap','complete','note','material')),
   quantity numeric(15,3) NOT NULL DEFAULT 0 CHECK(quantity >= 0),
   notes text NOT NULL DEFAULT '',
+  item_id uuid REFERENCES inventory_items(id) ON DELETE RESTRICT,
+  location text,
+  bin text,
+  inventory_movement_id uuid REFERENCES inventory_movements(id) ON DELETE RESTRICT,
   actor_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   idempotency_key text NOT NULL UNIQUE,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (kind <> 'material' OR (item_id IS NOT NULL AND inventory_movement_id IS NOT NULL AND quantity > 0))
 );
 CREATE INDEX production_events_job_idx ON production_events(job_id,created_at DESC);
 CREATE TRIGGER production_events_append_only BEFORE UPDATE OR DELETE ON production_events
