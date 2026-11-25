@@ -92,6 +92,7 @@ export async function transitionBomRevision(id: string, action: unknown, user: A
     );
     if (!result.rowCount) throw new HttpError(404, "NOT_FOUND", "BOM revision not found.");
     const row = result.rows[0];
+    await client.query("SELECT id FROM projects WHERE id=$1 FOR UPDATE", [row.project_id]);
     const expected = action === "submit" ? "draft" : "review";
     if (row.status !== expected) throw new HttpError(409, "INVALID_TRANSITION", `Only a ${expected} BOM revision can be ${action === "submit" ? "submitted" : "approved"}.`);
     if (action === "approve") {

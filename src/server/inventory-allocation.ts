@@ -42,11 +42,15 @@ export async function deductAvailableStock(
       "FROM inventory_reservations WHERE item_id=$1 AND location=$2 AND bin=$3 AND status='reserved'",
     reservedParams,
   );
-  const available = await client.query<{ sufficient: boolean }>(
-    "SELECT $1::numeric - ($2::numeric - $3::numeric) >= $4::numeric AS sufficient",
+  const available = await client.query<{ sufficient: boolean; onHandSufficient: boolean }>(
+    "SELECT $1::numeric - ($2::numeric - $3::numeric) >= $4::numeric AS sufficient, " +
+      "$1::numeric >= $4::numeric AS \"onHandSufficient\"",
     [stock.rows[0].on_hand, reserved.rows[0].total, reserved.rows[0].target, quantity],
   );
   if (!available.rows[0].sufficient) {
+    if (!available.rows[0].onHandSufficient) {
+      throw new HttpError(409, "INSUFFICIENT_STOCK", "The requested quantity exceeds the stock on hand.");
+    }
     throw new HttpError(409, "INSUFFICIENT_AVAILABLE_STOCK", "The requested quantity is reserved or unavailable.");
   }
 

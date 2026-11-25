@@ -129,13 +129,25 @@ CREATE TABLE engineering_bom_revision_lines (
 CREATE INDEX engineering_bom_revision_lines_item_idx
   ON engineering_bom_revision_lines(item_id, bom_revision_id);
 
+WITH revisions AS (
+  SELECT DISTINCT ON (project_id, revision)
+    project_id, revision, added_by, created_at
+  FROM engineering_bom_lines
+  ORDER BY project_id, revision, created_at
+), latest AS (
+  SELECT DISTINCT ON (project_id) project_id, revision
+  FROM engineering_bom_lines
+  ORDER BY project_id, created_at DESC, revision DESC
+)
 INSERT INTO engineering_bom_revisions
   (project_id, revision_code, status, change_notes, created_by, approved_by, approved_at, created_at)
-SELECT DISTINCT ON (project_id, revision)
-  project_id, revision, 'approved', 'Imported from the Phase 2 engineering BOM',
-  added_by, added_by, created_at, created_at
-FROM engineering_bom_lines
-ORDER BY project_id, revision, created_at;
+SELECT r.project_id, r.revision,
+  CASE WHEN r.revision=latest.revision THEN 'approved' ELSE 'superseded' END,
+  'Imported from the Phase 2 engineering BOM', r.added_by,
+  CASE WHEN r.revision=latest.revision THEN r.added_by ELSE NULL END,
+  CASE WHEN r.revision=latest.revision THEN r.created_at ELSE NULL END,
+  r.created_at
+FROM revisions r JOIN latest ON latest.project_id=r.project_id;
 
 INSERT INTO engineering_bom_revision_lines
   (bom_revision_id, item_id, required_qty, notes, created_at)
@@ -143,6 +155,8 @@ SELECT r.id, b.item_id, b.required_qty, b.notes, b.created_at
 FROM engineering_bom_lines b
 JOIN engineering_bom_revisions r
   ON r.project_id = b.project_id AND r.revision_code = b.revision;
+CREATE UNIQUE INDEX engineering_bom_one_approved_per_project_idx
+  ON engineering_bom_revisions(project_id) WHERE status='approved';
 
 CREATE TABLE engineering_change_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

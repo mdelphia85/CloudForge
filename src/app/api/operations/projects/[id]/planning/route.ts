@@ -26,9 +26,12 @@ export async function POST(request: Request, { params }: Context) {
     const user = await requireUser(request);
     requireRole(user, "admin", "operator");
     const { id } = await params;
+    const body = await readJson(request);
+    const result = await updateProjectPlanning(requireUuid(id, "projectId"), body, user);
+    const status = ["milestone", "task", "resource", "cost", "dependency"].includes(String(body.action)) ? 201 : 200;
     return NextResponse.json(
-      await updateProjectPlanning(requireUuid(id, "projectId"), await readJson(request), user),
-      { status: 201 },
+      result,
+      { status },
     );
   } catch (error) {
     return errorResponse(operationsError(error));

@@ -207,6 +207,22 @@ describe("Phase 3 cross-department workflows", () => {
     expect((await testPool().query(
       "SELECT count(*)::int AS n FROM engineering_change_approvals WHERE change_order_id=$1", [change.body.id],
     )).rows[0].n).toBe(3);
+    const nextBom = await call(bomRevisions.POST, {
+      method: "POST", cookie: actors.operator.cookie,
+      body: { projectId, revisionCode: "B", changeNotes: "Approved follow-up", lines: [{ itemId, requiredQty: "12" }] },
+    });
+    expect(nextBom.status).toBe(201);
+    expect((await dynamicCall(bomStatus.POST, { id: nextBom.body.id }, {
+      method: "POST", cookie: actors.operator.cookie, body: { action: "submit" },
+    })).status).toBe(200);
+    expect((await dynamicCall(bomStatus.POST, { id: nextBom.body.id }, {
+      method: "POST", cookie: actors.admin.cookie, body: { action: "approve" },
+    })).status).toBe(200);
+    const activeBoms = await testPool().query(
+      "SELECT count(*)::int AS n FROM engineering_bom_revisions WHERE project_id=$1 AND status='approved'",
+      [projectId],
+    );
+    expect(activeBoms.rows[0].n).toBe(1);
     const shortageResult = await call(materialShortages.GET, {
       cookie: actors.admin.cookie,
       path: `/api/operations/material-shortages?projectId=${projectId}`,
@@ -310,7 +326,12 @@ describe("Phase 3 cross-department workflows", () => {
     expect(uploadResponse.status).toBe(201);
     revisionId = (await uploadResponse.json()).id as string;
     expect((await dynamicCall(revisionRoute.PATCH, { id: revisionId }, { method: "PATCH", cookie: actors.admin.cookie })).status).toBe(200);
-    expect((await dynamicCall(revisionRoute.GET, { id: revisionId }, { cookie: actors.viewer.cookie })).status).toBe(200);
+    const programDownload = await revisionRoute.GET(
+      new Request(`${ORIGIN}/api/engineering/revisions/${revisionId}`, { headers: { cookie: actors.viewer.cookie } }),
+      { params: Promise.resolve({ id: revisionId }) },
+    );
+    expect(programDownload.status).toBe(200);
+    expect(Array.from(new Uint8Array(await programDownload.arrayBuffer()))).toEqual([9, 8, 7]);
     const installKey = movementKey() + "-install";
     const installBody = { revisionId, result: "installed", notes: "Commissioned on site", idempotencyKey: installKey };
     const installation = await dynamicCall(serviceInstalls.POST, { id: serviceJobId }, {
