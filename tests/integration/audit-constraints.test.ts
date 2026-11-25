@@ -73,7 +73,7 @@ describe("audit trail coverage", () => {
 
 describe("append-only protection", () => {
   it.each(["inventory_movements", "audit_events"])("blocks UPDATE, DELETE and TRUNCATE on %s", async (table) => {
-    for (const sql of [`UPDATE ${table} SET id = id`, `DELETE FROM ${table}`, `TRUNCATE ${table}`]) {
+    for (const sql of [`UPDATE ${table} SET id = id`, `DELETE FROM ${table}`, `TRUNCATE ${table} CASCADE`]) {
       const error = await rejects(sql);
       expect(error.message, sql).toMatch(/append-only/);
     }
