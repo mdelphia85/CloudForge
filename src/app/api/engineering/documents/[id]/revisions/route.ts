@@ -43,7 +43,8 @@ export async function POST(request:Request,{params}:Context) {
     const original=file.name.split(/[\\/]/).pop()??"";
     if(original.length<1||original.length>180||/[\x00-\x1F\x7F]/.test(original)||original==="."||original==="..")
       throw new HttpError(400,"INVALID_NAME","File name is invalid.");
-    const notes=typeof data.get("notes")==="string" ? shortText(data.get("notes"),"notes",1000) : "";
+    const rawNotes=data.get("notes");
+    const notes=typeof rawNotes==="string" && rawNotes.trim() ? shortText(rawNotes,"notes",1000) : "";
     const bytes=Buffer.from(await file.arrayBuffer());
     if(bytes.length>MAX_UPLOAD_BYTES) throw new HttpError(413,"FILE_TOO_LARGE","File exceeds 15 MB.");
     const sha256=createHash("sha256").update(bytes).digest("hex");
