@@ -1,7 +1,7 @@
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Boxes, LayoutDashboard, FolderKanban, Wrench, Factory, Package,
   ClipboardList, Truck, FileCode2, RefreshCcw, Plus, CheckCircle2, ChevronRight,
@@ -354,7 +354,7 @@ export default function OperationsWorkspace(){
               <div><strong className="text-sm">{r.file_name}</strong><p className="text-[11px] text-slate-500 mt-1">
                 Revision {r.revision} · {titleize(r.status)} · {(r.byte_size/1024).toFixed(1)} KB · SHA-256 {r.sha256.slice(0,12)}…</p></div>
               <div className="flex gap-2">
-                {(r.status==="approved"||user.role==="admin")&&<a href={"/api/engineering/revisions/"+r.id}
+                {(user.role==="admin"||(r.status==="approved"&&user.role==="operator"))&&<a href={"/api/engineering/revisions/"+r.id}
                   className="inline-flex gap-2 items-center border border-slate-300 rounded-md px-3 py-2 text-xs font-semibold hover:bg-slate-50"><Download size={13}/> Download</a>}
                 {r.status==="draft"&&user.role==="admin"&&<Button disabled={busy} onClick={()=>void approve(r.id)}><ShieldCheck size={14}/> Approve release</Button>}
               </div>
@@ -406,7 +406,7 @@ export default function OperationsWorkspace(){
           </form>}
           <div className="space-y-2">{matchingReleases.map(r=><div className="flex justify-between border rounded-lg p-3 text-xs" key={r.id}>
             <span><b>{r.kind.toUpperCase()}</b> · {r.title} · rev {r.revision}</span>
-            <a className="text-teal-700 font-semibold flex items-center gap-1" href={"/api/engineering/revisions/"+r.id}><Download size={13}/> Download</a>
+            {(user.role==="admin"||user.role==="operator")&&<a className="text-teal-700 font-semibold flex items-center gap-1" href={"/api/engineering/revisions/"+r.id}><Download size={13}/> Download</a>}
           </div>)}</div>
           <h3 className="font-bold text-sm">Recorded field installations</h3>
           {!installs.length&&<p className="text-xs text-slate-500">No installed revisions recorded yet.</p>}

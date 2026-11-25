@@ -2,7 +2,9 @@
 
 Cloud Forge is a deployment-neutral operations platform beginning with the Phase 1 inventory foundation. It is designed to run in cloud, customer-managed on-prem, air-gapped, and local environments from the same application release.
 
-Inventory now uses PostgreSQL-backed records, local password accounts, server-side role checks, and transactional movement/audit history. Additional modules remain planned and are not connected to backend services.
+Inventory uses PostgreSQL-backed records, local password accounts, server-side role checks, and transactional movement/audit history. Phase 2 connects project management, engineering, production, purchasing, and field service to the same database and inventory system.
+
+The operations workspace supports project tasks, equipment and BOM records, purchasing requests, and production jobs. Engineering users can upload PLC/HMI program revisions and administrators can approve releases; authorized administrators and operators can download approved releases, while field-service records capture installations. Production material issues update stock, movement history, production events, and audit history in one transaction.
 
 This first slice is for one organization per deployment. Do not place multiple customer organizations in one shared database/deployment; tenant isolation and organization switching are not implemented yet.
 
@@ -31,7 +33,7 @@ npm run dev
 
 For the first administrator only, set `BOOTSTRAP_ADMIN_TOKEN` to a random secret of at least 32 characters. Open the app and submit that token with the administrator account details. Remove the token from the deployment configuration after setup. Administrators can create additional local accounts from the inventory workspace.
 
-Passwords must be at least 14 characters and include uppercase and lowercase letters, a number, and a symbol. Database backups, TLS, PostgreSQL access controls, secret rotation, and operational hardening remain deployment responsibilities. This initial implementation does not provide offline mutation queues or claim regulatory compliance.
+Passwords must be at least 14 characters and include uppercase and lowercase letters, a number, and a symbol. Database backups, TLS, PostgreSQL access controls, secret rotation, and operational hardening remain deployment responsibilities. The application does not provide offline mutation queues or claim regulatory compliance.
 
 The initial cloud domain is `cloudforge.live`. Set `NEXT_PUBLIC_APP_URL=https://cloudforge.live` in the cloud deployment environment. Keep the local value as `http://localhost:3000` during development and use the customer-provided URL for on-prem deployments.
 

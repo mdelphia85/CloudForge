@@ -45,12 +45,18 @@ export async function POST(request:Request,{params}:Context) {
     const result=await inTransaction(async client=>{
       // Serializes concurrent requests with the same key before stock adjustments.
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[key]);
-      const previous=await client.query<{id:string;job_id:string;kind:string;quantity:string}>(
-        "SELECT id,job_id,kind,quantity::text FROM production_events WHERE idempotency_key=$1",[key],
+      const previous=await client.query<{
+        id:string;job_id:string;kind:string;quantity:string;sku:string|null;
+        location:string|null;bin:string|null;notes:string;
+      }>(
+        "SELECT e.id,e.job_id,e.kind,e.quantity::text,e.location,e.bin,e.notes,i.sku " +
+        "FROM production_events e LEFT JOIN inventory_items i ON i.id=e.item_id " +
+        "WHERE e.idempotency_key=$1",[key],
       );
       if(previous.rowCount) {
         const row=previous.rows[0];
-        if(row.job_id!==jobId||row.kind!==action||Number(row.quantity)!==Number(quantity))
+        if(row.job_id!==jobId||row.kind!==action||Number(row.quantity)!==Number(quantity)||
+          row.sku!==sku||row.location!==location||row.bin!==bin||row.notes!==notes)
           throw new HttpError(409,"KEY_REUSED","The idempotency key was already used for another event.");
         return {id:row.id,replayed:true};
       }

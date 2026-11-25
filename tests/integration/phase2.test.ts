@@ -76,6 +76,7 @@ describe("Phase 2 cross-module integration",()=>{
     const replay=await writeEvent(jobId,payload,actors.operator.cookie);
     expect(replay.status).toBe(200);
     expect(replay.body.replayed).toBe(true);
+    expect((await writeEvent(jobId,{...payload,bin:"A-02"},actors.operator.cookie)).status).toBe(409);
     expect((await writeEvent(jobId,{kind:"progress",quantity:"3",idempotencyKey:movementKey()+"-over"},actors.operator.cookie)).status).toBe(409);
     expect((await writeEvent(jobId,{kind:"progress",quantity:"2",idempotencyKey:movementKey()+"-progress"},actors.operator.cookie)).status).toBe(201);
     expect((await writeEvent(jobId,{kind:"complete",idempotencyKey:movementKey()+"-complete"},actors.operator.cookie)).status).toBe(201);
@@ -115,8 +116,11 @@ describe("Phase 2 cross-module integration",()=>{
       method:"PATCH",cookie:actors.admin.cookie,
     });
     expect(approved.status).toBe(200);
-    const downloadable=await revisions.GET(new Request(ORIGIN+"/api/engineering/revisions/"+revisionId,
+    const viewerDownload=await revisions.GET(new Request(ORIGIN+"/api/engineering/revisions/"+revisionId,
       {headers:{cookie:actors.viewer.cookie}}),{params:Promise.resolve({id:revisionId})});
+    expect(viewerDownload.status).toBe(403);
+    const downloadable=await revisions.GET(new Request(ORIGIN+"/api/engineering/revisions/"+revisionId,
+      {headers:{cookie:actors.operator.cookie}}),{params:Promise.resolve({id:revisionId})});
     expect(downloadable.status).toBe(200);
     expect(downloadable.headers.get("content-type")).toBe("application/octet-stream");
     expect([...new Uint8Array(await downloadable.arrayBuffer())]).toEqual([0,1,2,3,4]);

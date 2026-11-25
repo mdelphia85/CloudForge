@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive, Boxes, ChevronDown, CircleAlert, ClipboardList, FileClock, LogOut,
-  MapPin, Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
+  Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
 } from "lucide-react";
 
 type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer" };

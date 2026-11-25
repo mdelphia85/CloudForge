@@ -19,10 +19,11 @@ export async function GET(request:Request,{params}:Context) {
     );
     if(!result.rowCount) throw new HttpError(404,"NOT_FOUND","Revision not found.");
     const row=result.rows[0];
-    // Only approved releases are available to field personnel.
-    // Admins and uploaders can inspect drafts without declaring them installed.
-    if(row.status!=="approved" && user.role!=="admin" && row.uploaded_by!==user.id)
+    if(row.status==="approved") {
+      requireRole(user,"admin","operator");
+    } else if(user.role!=="admin" && row.uploaded_by!==user.id) {
       throw new HttpError(403,"NOT_APPROVED","Only approved engineering releases may be downloaded.");
+    }
     await inTransaction(async client=>{
       await audit(client,user,"engineering.revision_download","engineering_document",row.document_id,
         {revisionId,sha256:row.sha256,status:row.status});
