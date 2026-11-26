@@ -2,27 +2,31 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  call, closeDatabases, itemBody, loadHandlers, resetDatabase, runMigrations,
+  call, closeDatabases, itemBody, loadHandlers, runMigrations,
   seedActors, testPool,
 } from "./harness";
 import * as resources from "@/app/api/operations/[resource]/route";
 import * as materialShortages from "@/app/api/operations/material-shortages/route";
 import * as bomStatus from "@/app/api/operations/engineering/bom-revisions/[id]/status/route";
 
-async function applyMigrationsThrough(lastMigration: string) {
+async function applyMigrationsThrough(lastMigration: string, reset = false) {
   const pool = testPool();
   const client = await pool.connect();
   try {
-    await client.query("DROP SCHEMA public CASCADE");
-    await client.query("CREATE SCHEMA public");
+    if (reset) {
+      await client.query("DROP SCHEMA public CASCADE");
+      await client.query("CREATE SCHEMA public");
+      await client.query(
+        "CREATE TABLE public.schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+      );
+    }
     await client.query("SET search_path TO public");
-    await client.query(
-      "CREATE TABLE public.schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
-    );
     const directory = join(process.cwd(), "migrations");
     const files = (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
     for (const name of files) {
       if (name > lastMigration) break;
+      const applied = await client.query("SELECT 1 FROM public.schema_migrations WHERE name=$1", [name]);
+      if (applied.rowCount) continue;
       const sql = await readFile(join(directory, name), "utf8");
       await client.query("BEGIN");
       try {
@@ -51,8 +55,7 @@ describe("Phase 2 BOM migration provenance", () => {
   afterAll(closeDatabases);
 
   it("keeps operator-authored legacy BOMs provisional until an explicit engineering approval", async () => {
-    await resetDatabase();
-    await applyMigrationsThrough("003_phase2_operations.sql");
+    await applyMigrationsThrough("003_phase2_operations.sql", true);
 
     const handlers = await loadHandlers();
     const actors = await seedActors(handlers);
