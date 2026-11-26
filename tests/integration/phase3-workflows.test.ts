@@ -268,7 +268,7 @@ describe("Phase 3 cross-department workflows", () => {
     });
     expect(shortageResult.status).toBe(200);
     expect(shortageResult.body.shortages[0]).toMatchObject({
-      demandStatus: "approved", bomStatus: "approved", bomRevisionCode: "A",
+      demandStatus: "approved", bomStatus: "approved", bomRevisionCode: "B",
       requiredQty: "12.000", consumedQty: "12.000",
     });
     expect(Number(shortageResult.body.shortages[0].shortageQty)).toBe(0);
@@ -320,7 +320,7 @@ describe("Phase 3 cross-department workflows", () => {
     const downtimeKey = movementKey() + "-downtime";
     const downtimeBody = {
       productionJobId, workCenterId: center.body.id, reason: "Material delay",
-      startedAt: started.toISOString(), endedAt: new Date(databaseNow.getTime() - 1000).toISOString(),
+      startedAt: started.toISOString(), endedAt: databaseNow.toISOString(),
       notes: "Awaiting material", idempotencyKey: downtimeKey,
     };
     expect((await call(downtime.POST, { method: "POST", cookie: actors.operator.cookie, body: downtimeBody })).status).toBe(201);

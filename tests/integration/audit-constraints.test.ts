@@ -161,6 +161,7 @@ describe("migrations", () => {
     expect(applied.rows.map((r) => r.name)).toEqual([
       "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
       "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
+      "005_phase3_review_corrections.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -172,7 +173,8 @@ describe("migrations", () => {
     expect(tables.rows.map((r) => r.table_name)).toEqual([
       "audit_events", "auth_login_attempts", "engineering_assets", "engineering_bom_lines",
       "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
-      "engineering_change_links", "engineering_change_orders", "engineering_documents", "engineering_revisions",
+      "engineering_change_implementation_evidence", "engineering_change_links", "engineering_change_orders",
+      "engineering_documents", "engineering_revisions",
       "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
       "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
       "production_downtime", "production_events", "production_job_assignments", "production_jobs",

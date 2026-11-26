@@ -79,8 +79,7 @@ describe("Phase 2 BOM migration provenance", () => {
       [project.body.id, itemRow.rows[0].id, operator.rows[0].id],
     );
 
-    const phase3Migration = runMigrations();
-    expect(phase3Migration.status, phase3Migration.output).toBe(0);
+    await applyMigrationsThrough("004_phase3_manufacturing_change_control.sql");
     const imported = await testPool().query(
       "SELECT id,revision_code,status,approved_by,approved_at,change_notes " +
         "FROM engineering_bom_revisions WHERE project_id=$1 ORDER BY revision_code",
