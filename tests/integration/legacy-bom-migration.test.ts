@@ -136,6 +136,12 @@ describe("Phase 2 BOM migration provenance", () => {
       "SELECT action,actor_user_id FROM audit_events WHERE entity_type='engineering_bom_revision' AND entity_id=$1",
       [legacyId],
     );
-    expect(approvalHistory.rows).toEqual([{ action: "engineering.bom_revision.approved", actor_user_id: actors.admin.id }]);
+    expect(approvalHistory.rows).toHaveLength(2);
+    expect(approvalHistory.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "engineering.bom_revision.submitted" }),
+      expect.objectContaining({
+        action: "engineering.bom_revision.approved", actor_user_id: actors.admin.id,
+      }),
+    ]));
   });
 });
