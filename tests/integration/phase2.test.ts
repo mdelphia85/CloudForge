@@ -129,7 +129,10 @@ describe("Phase 2 cross-module integration",()=>{
   });
 
   it("records the exact approved PLC release on its customer equipment service job",async()=>{
-    const job=await add("service",{project_id:projectId,asset_id:assetId,title:"Controller commissioning"},actors.admin.cookie);
+    const viewerId=(await testPool().query("SELECT id FROM users WHERE email=$1",[actors.viewer.email])).rows[0].id as string;
+    const job=await add("service",{
+      project_id:projectId,asset_id:assetId,title:"Controller commissioning",assigned_to:viewerId,
+    },actors.admin.cookie);
     expect(job.status).toBe(201);
     serviceId=job.body.id;
     const result=await call(req=>installs.POST(req,{params:Promise.resolve({id:serviceId})}),{

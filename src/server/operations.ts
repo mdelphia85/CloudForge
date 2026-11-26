@@ -89,7 +89,7 @@ const SPECS: Record<Resource, ResourceSpec> = {
       field("title","text",true),field("assigned_to","uuid"),
       field("scheduled_date","date"),field("notes","text",false,2000),
     ],
-    read: "SELECT s.*,a.asset_tag,a.customer_site,p.code AS project_code,u.display_name AS technician_name FROM field_service_jobs s JOIN engineering_assets a ON a.id=s.asset_id LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN users u ON u.id=s.assigned_to ORDER BY s.created_at DESC LIMIT 200",
+    read: "SELECT s.*,a.asset_tag,a.customer_site,p.code AS project_code,u.display_name AS technician_name FROM field_service_jobs s JOIN engineering_assets a ON a.id=s.asset_id LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN users u ON u.id=s.assigned_to WHERE ($1::uuid IS NULL OR s.assigned_to=$1) ORDER BY s.created_at DESC LIMIT 200",
   },
 };
 
@@ -149,12 +149,14 @@ export async function audit(client: PoolClient, user: AuthenticatedUser, action:
   );
 }
 
-export async function listResource(resource: Resource): Promise<Record<string,unknown>[]> {
-  const result = await getPool().query(SPECS[resource].read);
+export async function listResource(resource: Resource, user: AuthenticatedUser): Promise<Record<string,unknown>[]> {
+  const result = resource === "service"
+    ? await getPool().query(SPECS[resource].read, [user.role === "viewer" ? user.id : null])
+    : await getPool().query(SPECS[resource].read);
   return result.rows;
 }
-export async function listOverview(): Promise<Record<Resource,Record<string,unknown>[]>> {
-  const entries = await Promise.all(RESOURCES.map(async resource => [resource, await listResource(resource)] as const));
+export async function listOverview(user: AuthenticatedUser): Promise<Record<Resource,Record<string,unknown>[]>> {
+  const entries = await Promise.all(RESOURCES.map(async resource => [resource, await listResource(resource, user)] as const));
   return Object.fromEntries(entries) as Record<Resource,Record<string,unknown>[]>;
 }
 
@@ -228,7 +230,22 @@ export async function updateStatus(resource: Resource, id: string, next: unknown
     const old=found.rows[0].status;
     if (old === next) return {id,status:old};
     if (!allowed[old]?.includes(next)) throw new HttpError(409,"INVALID_TRANSITION","Status cannot change from "+old+" to "+next+".");
+    if (resource === "tasks" && next === "done") {
+      const pending = await client.query(
+        "SELECT 1 FROM project_task_dependencies d JOIN project_tasks prerequisite ON prerequisite.id=d.depends_on_task_id " +
+          "WHERE d.task_id=$1 AND prerequisite.status<>'done' LIMIT 1",
+        [id],
+      );
+      if (pending.rowCount) throw new HttpError(409,"DEPENDENCY_PENDING","Complete prerequisite tasks before marking this task done.");
+    }
     await client.query("UPDATE "+table+" SET status=$2"+(resource==="service"?"":",updated_at=now()")+" WHERE id=$1",[id,next]);
+    if (resource === "service") {
+      await client.query(
+        "INSERT INTO field_service_updates(service_job_id,update_type,status,notes,actor_id) " +
+          "VALUES($1,'status',$2,$3,$4)",
+        [id, next, `Status changed from ${old} to ${next} through operations.`, user.id],
+      );
+    }
     await audit(client,user,SPECS[resource].label+".status_changed",table,id,{from:old,to:next});
     return {id,status:next};
   });

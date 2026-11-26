@@ -1,0 +1,13 @@
+import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth";
+import { errorResponse } from "@/server/errors";
+import { listProductionResources } from "@/server/phase3/production";
+
+export async function GET(request: Request) {
+  try {
+    await requireUser(request);
+    return NextResponse.json(await listProductionResources(), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
