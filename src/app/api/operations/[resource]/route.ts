@@ -8,8 +8,8 @@ export async function GET(request:Request, {params}:Context) {
   try {
     const {resource}=await params;
     if (!isResource(resource)) throw new HttpError(404,"NOT_FOUND","Unknown module.");
-    await requireUser(request);
-    return NextResponse.json({records:await listResource(resource)}, {headers:{"Cache-Control":"no-store"}});
+    const user=await requireUser(request);
+    return NextResponse.json({records:await listResource(resource,user)}, {headers:{"Cache-Control":"no-store"}});
   } catch (error) { return errorResponse(error); }
 }
 export async function POST(request:Request, {params}:Context) {

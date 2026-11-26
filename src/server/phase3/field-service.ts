@@ -68,6 +68,21 @@ export async function listServiceWork(jobId: string, user: AuthenticatedUser) {
   return { job: job.rows[0], parts: parts.rows, updates: updates.rows, approvedPrograms: programs.rows, installs: installs.rows };
 }
 
+export async function listServiceInstalls(jobId: string, user: AuthenticatedUser) {
+  return inTransaction(async (client) => {
+    await requireServiceAccess(client, jobId, user, true);
+    const installs = await client.query(
+      "SELECT i.id,i.result,i.notes,i.performed_at,u.display_name AS technician," +
+        "r.revision,r.file_name,r.sha256,d.kind,d.title AS document_title " +
+        "FROM field_program_installs i JOIN engineering_revisions r ON r.id=i.revision_id " +
+        "JOIN engineering_documents d ON d.id=r.document_id JOIN users u ON u.id=i.performed_by " +
+        "WHERE i.service_job_id=$1 ORDER BY i.performed_at DESC LIMIT 100",
+      [jobId],
+    );
+    return { installs: installs.rows };
+  });
+}
+
 export async function recordServicePart(jobId: string, body: Record<string, unknown>, user: AuthenticatedUser) {
   const action = body.action;
   if (action !== "used" && action !== "returned") throw new HttpError(400, "INVALID_ACTION", "Choose used or returned.");

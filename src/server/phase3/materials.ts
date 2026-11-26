@@ -132,12 +132,13 @@ export async function getMaterialShortages(projectId?: string) {
   const filter = projectId ? "WHERE p.id=$1" : "";
   const result = await getPool().query(
     `WITH current_revisions AS (
-       SELECT DISTINCT ON (project_id) id,project_id FROM engineering_bom_revisions
-       WHERE status='approved' ORDER BY project_id,created_at DESC,id DESC
+       SELECT DISTINCT ON (project_id) id,project_id,status,revision_code FROM engineering_bom_revisions
+       WHERE status IN ('approved','legacy') ORDER BY project_id,created_at DESC,id DESC
      ), required AS (
-       SELECT cr.project_id,l.item_id,sum(l.required_qty)::numeric AS required_qty
+       SELECT cr.project_id,cr.status AS bom_status,cr.revision_code AS bom_revision_code,
+         l.item_id,sum(l.required_qty)::numeric AS required_qty
        FROM current_revisions cr JOIN engineering_bom_revision_lines l ON l.bom_revision_id=cr.id
-       GROUP BY cr.project_id,l.item_id
+       GROUP BY cr.project_id,cr.status,cr.revision_code,l.item_id
      ), stock AS (
        SELECT item_id,sum(on_hand)::numeric AS on_hand FROM inventory_stock GROUP BY item_id
      ), reserved AS (
@@ -171,6 +172,9 @@ export async function getMaterialShortages(projectId?: string) {
        GROUP BY coalesce(l.project_id,po.project_id),l.item_id
      )
      SELECT p.id AS "projectId",p.code AS "projectCode",i.id AS "itemId",i.sku,i.name AS "itemName",
+       r.bom_status AS "bomStatus",
+       CASE WHEN r.bom_status='legacy' THEN 'provisional' ELSE 'approved' END AS "demandStatus",
+       r.bom_revision_code AS "bomRevisionCode",
        r.required_qty::text AS "requiredQty",coalesce(s.on_hand,0)::text AS "onHand",
        coalesce(pr.project_total,0)::text AS "projectReserved",
        coalesce(c.quantity,0)::text AS "consumedQty",

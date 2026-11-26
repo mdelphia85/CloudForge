@@ -125,10 +125,19 @@ export async function recordDowntime(body: Record<string, unknown>, user: Authen
   if (key.length < 8) throw new HttpError(400, "INVALID_KEY", "An idempotency key of at least 8 characters is required.");
   return inTransaction(async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["production-downtime:" + key]);
-    const job = await client.query<{ status: string }>("SELECT status FROM production_jobs WHERE id=$1 FOR UPDATE", [jobId]);
+    const job = await client.query<{ status: string; created_at: Date }>(
+      "SELECT status,created_at FROM production_jobs WHERE id=$1 FOR UPDATE",
+      [jobId],
+    );
     if (!job.rowCount) throw new HttpError(404, "JOB_NOT_FOUND", "Production job not found.");
-    const assignment = await client.query<{ operator_id: string }>(
-      "SELECT operator_id FROM production_job_assignments WHERE production_job_id=$1 AND work_center_id=$2 AND is_active",
+    const assignment = await client.query<{
+      operator_id: string; assigned_at: Date; ended_at: Date | null;
+      first_started_at: Date | null; database_now: Date;
+    }>(
+      "SELECT a.operator_id,a.assigned_at,a.ended_at," +
+        "(SELECT min(e.created_at) FROM production_events e WHERE e.job_id=$1 AND e.kind IN ('start','resume')) AS first_started_at," +
+        "now() AS database_now FROM production_job_assignments a " +
+        "WHERE a.production_job_id=$1 AND a.work_center_id=$2 AND a.is_active FOR SHARE",
       [jobId, workCenterId],
     );
     if (!assignment.rowCount) throw new HttpError(409, "NOT_ASSIGNED", "Downtime requires an active assignment at that work center.");
@@ -147,7 +156,31 @@ export async function recordDowntime(body: Record<string, unknown>, user: Authen
       if (!same) throw new HttpError(409, "KEY_REUSED", "The idempotency key was already used for different downtime details.");
       return { id: row.id, replayed: true };
     }
-    if (job.rows[0].status === "completed") throw new HttpError(409, "JOB_CLOSED", "Downtime cannot be recorded for a completed job.");
+    if (job.rows[0].status !== "in_progress" && job.rows[0].status !== "on_hold") {
+      throw new HttpError(409, "JOB_NOT_ACTIVE", "Downtime can only be recorded while a job is in progress or on hold.");
+    }
+
+    const intervalStart = new Date(startedAt).getTime();
+    const intervalEnd = new Date(endedAt).getTime();
+    const jobCreatedAt = job.rows[0].created_at.getTime();
+    const assignmentStartedAt = assignment.rows[0].assigned_at.getTime();
+    const databaseNow = assignment.rows[0].database_now.getTime();
+    if (intervalStart < jobCreatedAt) {
+      throw new HttpError(409, "DOWNTIME_BEFORE_JOB", "Downtime cannot start before the production job was created.");
+    }
+    if (intervalStart < assignmentStartedAt) {
+      throw new HttpError(409, "DOWNTIME_BEFORE_ASSIGNMENT", "Downtime cannot start before the work-center assignment began.");
+    }
+    if (!assignment.rows[0].first_started_at || intervalStart < assignment.rows[0].first_started_at.getTime()) {
+      throw new HttpError(409, "DOWNTIME_BEFORE_START", "Downtime cannot start before the production job began.");
+    }
+    if (intervalEnd > databaseNow) {
+      throw new HttpError(409, "FUTURE_DOWNTIME", "Downtime cannot extend into the future.");
+    }
+    const assignmentEndedAt = assignment.rows[0].ended_at?.getTime();
+    if (assignmentEndedAt !== undefined && intervalEnd > assignmentEndedAt) {
+      throw new HttpError(409, "DOWNTIME_AFTER_ASSIGNMENT", "Downtime cannot extend past the work-center assignment.");
+    }
     const result = await client.query<{ id: string }>(
       "INSERT INTO production_downtime(production_job_id,work_center_id,reason,started_at,ended_at,notes,operator_id,idempotency_key) " +
         "VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",

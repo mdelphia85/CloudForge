@@ -1,23 +1,20 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { requireUser } from "@/server/auth";
-import { getPool,inTransaction } from "@/server/db";
+import { inTransaction } from "@/server/db";
 import { errorResponse,HttpError,readJson,requireSameOrigin } from "@/server/errors";
 import { audit,operationsError,requireUuid,shortText } from "@/server/operations";
+import { listServiceInstalls } from "@/server/phase3/field-service";
 type Context={params:Promise<{id:string}>};
 
 export async function GET(request:Request,{params}:Context) {
   try {
-    await requireUser(request);
+    const user=await requireUser(request);
     const {id}=await params;
-    const rows=await getPool().query(
-      "SELECT i.id,i.result,i.notes,i.performed_at,u.display_name AS technician,"+
-      "r.revision,r.file_name,r.sha256,d.kind,d.title AS document_title " +
-      "FROM field_program_installs i JOIN engineering_revisions r ON r.id=i.revision_id " +
-      "JOIN engineering_documents d ON d.id=r.document_id JOIN users u ON u.id=i.performed_by " +
-      "WHERE i.service_job_id=$1 ORDER BY i.performed_at DESC LIMIT 100",[requireUuid(id)],
+    return NextResponse.json(
+      await listServiceInstalls(requireUuid(id),user),
+      {headers:{"Cache-Control":"no-store"}},
     );
-    return NextResponse.json({installs:rows.rows},{headers:{"Cache-Control":"no-store"}});
   } catch(error) {return errorResponse(error);}
 }
 

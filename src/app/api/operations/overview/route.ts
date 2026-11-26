@@ -5,7 +5,7 @@ import { listOverview } from "@/server/operations";
 
 export async function GET(request:Request) {
   try {
-    await requireUser(request);
-    return NextResponse.json(await listOverview(), {headers:{"Cache-Control":"no-store"}});
+    const user=await requireUser(request);
+    return NextResponse.json(await listOverview(user), {headers:{"Cache-Control":"no-store"}});
   } catch(error) { return errorResponse(error); }
 }

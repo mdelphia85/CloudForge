@@ -104,7 +104,7 @@ CREATE TABLE engineering_bom_revisions (
   project_id uuid NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
   revision_code text NOT NULL CHECK (length(revision_code) BETWEEN 1 AND 40),
   status text NOT NULL DEFAULT 'draft'
-    CHECK (status IN ('draft','review','approved','superseded')),
+    CHECK (status IN ('draft','review','approved','legacy','superseded')),
   change_notes text NOT NULL DEFAULT '',
   created_by uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   approved_by uuid REFERENCES users(id) ON DELETE RESTRICT,
@@ -142,10 +142,9 @@ WITH revisions AS (
 INSERT INTO engineering_bom_revisions
   (project_id, revision_code, status, change_notes, created_by, approved_by, approved_at, created_at)
 SELECT r.project_id, r.revision,
-  CASE WHEN r.revision=latest.revision THEN 'approved' ELSE 'superseded' END,
-  'Imported from the Phase 2 engineering BOM', r.added_by,
-  CASE WHEN r.revision=latest.revision THEN r.added_by ELSE NULL END,
-  CASE WHEN r.revision=latest.revision THEN r.created_at ELSE NULL END,
+  CASE WHEN r.revision=latest.revision THEN 'legacy' ELSE 'superseded' END,
+  'Imported from the Phase 2 engineering BOM; approval was not recorded in source data', r.added_by,
+  NULL, NULL,
   r.created_at
 FROM revisions r JOIN latest ON latest.project_id=r.project_id;
 

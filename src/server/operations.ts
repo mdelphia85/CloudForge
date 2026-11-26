@@ -89,7 +89,7 @@ const SPECS: Record<Resource, ResourceSpec> = {
       field("title","text",true),field("assigned_to","uuid"),
       field("scheduled_date","date"),field("notes","text",false,2000),
     ],
-    read: "SELECT s.*,a.asset_tag,a.customer_site,p.code AS project_code,u.display_name AS technician_name FROM field_service_jobs s JOIN engineering_assets a ON a.id=s.asset_id LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN users u ON u.id=s.assigned_to ORDER BY s.created_at DESC LIMIT 200",
+    read: "SELECT s.*,a.asset_tag,a.customer_site,p.code AS project_code,u.display_name AS technician_name FROM field_service_jobs s JOIN engineering_assets a ON a.id=s.asset_id LEFT JOIN projects p ON p.id=s.project_id LEFT JOIN users u ON u.id=s.assigned_to WHERE ($1::uuid IS NULL OR s.assigned_to=$1) ORDER BY s.created_at DESC LIMIT 200",
   },
 };
 
@@ -149,12 +149,14 @@ export async function audit(client: PoolClient, user: AuthenticatedUser, action:
   );
 }
 
-export async function listResource(resource: Resource): Promise<Record<string,unknown>[]> {
-  const result = await getPool().query(SPECS[resource].read);
+export async function listResource(resource: Resource, user: AuthenticatedUser): Promise<Record<string,unknown>[]> {
+  const result = resource === "service"
+    ? await getPool().query(SPECS[resource].read, [user.role === "viewer" ? user.id : null])
+    : await getPool().query(SPECS[resource].read);
   return result.rows;
 }
-export async function listOverview(): Promise<Record<Resource,Record<string,unknown>[]>> {
-  const entries = await Promise.all(RESOURCES.map(async resource => [resource, await listResource(resource)] as const));
+export async function listOverview(user: AuthenticatedUser): Promise<Record<Resource,Record<string,unknown>[]>> {
+  const entries = await Promise.all(RESOURCES.map(async resource => [resource, await listResource(resource, user)] as const));
   return Object.fromEntries(entries) as Record<Resource,Record<string,unknown>[]>;
 }
 

@@ -14,7 +14,7 @@ export async function GET(request: Request, { params }: Context) {
     const { id } = await params;
     const projectId = requireUuid(id, "projectId");
     await inTransaction((client) => requireProjectOwner(client, user, projectId));
-    return NextResponse.json(await getProjectPlanning(projectId), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(await getProjectPlanning(projectId, user), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return errorResponse(error);
   }

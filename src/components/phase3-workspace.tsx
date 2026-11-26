@@ -95,6 +95,7 @@ export default function Phase3Workspace() {
   const [shortages, setShortages] = useState<Row[]>([]);
   const [boms, setBoms] = useState<Row[]>([]);
   const [changes, setChanges] = useState<Row[]>([]);
+  const [approvedRevisions, setApprovedRevisions] = useState<Row[]>([]);
   const [production, setProduction] = useState<{ workCenters: Row[]; shifts: Row[]; assignments: Row[]; downtime: Row[] }>({
     workCenters: [], shifts: [], assignments: [], downtime: [],
   });
@@ -113,7 +114,7 @@ export default function Phase3Workspace() {
   const [notice, setNotice] = useState("");
 
   const refresh = useCallback(async () => {
-    const [data, optionData, supplierData, orderData, reserveData, shortageData, bomData, changeData, floorData] = await Promise.all([
+    const [data, optionData, supplierData, orderData, reserveData, shortageData, bomData, changeData, revisionData, floorData] = await Promise.all([
       api<Record<string, Row[]>>("/api/operations/overview"),
       api<{ users: Row[]; items: Row[] }>("/api/operations/phase3/options"),
       api<{ suppliers: Row[] }>("/api/operations/suppliers"),
@@ -122,6 +123,7 @@ export default function Phase3Workspace() {
       api<{ shortages: Row[] }>("/api/operations/material-shortages"),
       api<{ revisions: Row[] }>("/api/operations/engineering/bom-revisions"),
       api<{ changeOrders: Row[] }>("/api/operations/engineering/change-orders"),
+      api<{ revisions: Row[] }>("/api/operations/engineering/approved-revisions"),
       api<typeof production>("/api/operations/production/resources"),
     ]);
     setOverview(data);
@@ -133,6 +135,7 @@ export default function Phase3Workspace() {
     setShortages(shortageData.shortages);
     setBoms(bomData.revisions);
     setChanges(changeData.changeOrders);
+    setApprovedRevisions(revisionData.revisions);
     setProduction(floorData);
   }, []);
 
@@ -314,7 +317,8 @@ export default function Phase3Workspace() {
             <div className="md:col-span-2"><Submit>Reserve material</Submit></div>
           </form></Panel>}
           <Panel title="Material availability and shortages"><Table rows={shortages} columns={[
-            ["projectCode","Project"],["sku","SKU"],["requiredQty","Required"],["consumedQty","Consumed"],
+            ["projectCode","Project"],["sku","SKU"],["demandStatus","Demand basis"],["bomRevisionCode","BOM revision"],
+            ["requiredQty","Required"],["consumedQty","Consumed"],
             ["projectReserved","Reserved"],["onHand","On hand"],["incomingQty","Incoming"],["shortageQty","Shortage"],
           ]}/></Panel>
         </div>
@@ -396,11 +400,51 @@ export default function Phase3Workspace() {
           const actions = row.status === "draft" ? ["submit"] : row.status === "review" && user.role === "admin" ?
             ["approve", "reject"] : row.status === "approved" && user.role === "admin" ? ["implement"] : [];
           const links = Array.isArray(row.links) ? row.links as Row[] : [];
+          const documentLinks = links.filter((link) => link.type === "document");
+          const hasDocumentRevisions = documentLinks.every((link) =>
+            approvedRevisions.some((revision) => revision.documentId === link.id),
+          );
           return <div className="space-y-2">
-            {canEdit && actions.map((action) => <button key={action} onClick={() => void mutate(
+            {canEdit && actions.filter((action) => action !== "implement").map((action) => <button key={action} onClick={() => void mutate(
               `/api/operations/engineering/change-orders/${row.id}/action`, { action },
               `Change ${action === "submit" ? "submitted" : action === "implement" ? "implemented" : action === "approve" ? "approved" : "rejected"}.`,
             )} className="mr-2 text-teal-700 underline">{action}</button>)}
+            {canEdit && actions.includes("implement") && <form onSubmit={(event) => void sendForm(
+              event,
+              `/api/operations/engineering/change-orders/${row.id}/action`,
+              "Change implementation evidence recorded.",
+              (form) => ({
+                action: "implement",
+                notes: form.get("verificationNotes"),
+                documentRevisions: documentLinks.map((link) => ({
+                  linkId: link.linkId,
+                  revisionId: form.get(`revision-${String(link.linkId)}`),
+                })),
+              }),
+            )} className="space-y-2 rounded border border-slate-200 p-2">
+              {documentLinks.map((link) => {
+                const revisions = approvedRevisions.filter((revision) => revision.documentId === link.id);
+                return revisions.length ? <SelectField
+                  key={String(link.linkId)}
+                  name={`revision-${String(link.linkId)}`}
+                  label={`Approved revision · ${value(link, "documentTitle")}`}
+                  required
+                  options={revisions.map((revision) => ({
+                    value: String(revision.id),
+                    label: `Rev ${value(revision, "revision")} · ${value(revision, "fileName")}`,
+                  }))}
+                /> : <p key={String(link.linkId)} className="text-xs text-amber-700">
+                  No approved revision is available for {value(link, "documentTitle")}; approve one before implementation.
+                </p>;
+              })}
+              <label className="block text-xs font-semibold text-slate-700">
+                <span className="mb-1 block">Verification and implementation notes *</span>
+                <textarea name="verificationNotes" required maxLength={2000} rows={3}
+                  className="w-full rounded-md border border-slate-300 p-2 text-sm"/>
+              </label>
+              <p className="text-xs text-slate-500">This records verified revision and site evidence; it does not program physical controllers.</p>
+              {hasDocumentRevisions && <Submit>Record evidence and implement</Submit>}
+            </form>}
             <details><summary className="cursor-pointer text-teal-700">Details / approval history</summary>
               <div className="min-w-[320px] space-y-2 p-2 text-xs">
                 <p><strong>Reason:</strong> {value(row, "reason")}</p>
@@ -408,6 +452,10 @@ export default function Phase3Workspace() {
                 <p><strong>Implementation:</strong> {value(row, "implementationNotes")}</p>
                 <p><strong>Linked records:</strong> {links.map((link) => `${value(link, "type")} ${value(link, "id")}`).join(", ") || "—"}</p>
                 <Table rows={(row.approvals as Row[]) ?? []} columns={[["action","Action"],["actorName","Actor"],["notes","Notes"],["createdAt","Date"]]}/>
+                <Table rows={(row.implementationEvidence as Row[]) ?? []} columns={[
+                  ["linkType","Record type"],["documentTitle","Document"],["revision","Document revision"],
+                  ["bomRevisionCode","BOM revision"],["notes","Verification"],["verifiedBy","Verified by"],["verifiedAt","Verified at"],
+                ]}/>
               </div>
             </details>
           </div>;
@@ -510,7 +558,8 @@ export default function Phase3Workspace() {
             ["taskTitle","Task"],["dependsOnTitle","Depends on"],
           ]}/></Panel>
           <Panel title="Material readiness"><Table rows={(planning.materialReadiness as Row[]) ?? []} columns={[
-            ["sku","SKU"],["requiredQty","Required"],["consumedQty","Used"],["projectReserved","Reserved"],["incomingQty","Incoming"],["shortageQty","Shortage"],
+            ["sku","SKU"],["demandStatus","Demand basis"],["bomRevisionCode","BOM revision"],
+            ["requiredQty","Required"],["consumedQty","Used"],["projectReserved","Reserved"],["incomingQty","Incoming"],["shortageQty","Shortage"],
           ]}/></Panel>
           <Panel title="Engineering documents and equipment"><Table rows={(planning.engineeringDocuments as Row[]) ?? []} columns={[
             ["title","Document / program"],["kind","Type"],["revisions","Revisions"],["approved_revision","Approved revision"],

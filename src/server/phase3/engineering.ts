@@ -6,6 +6,7 @@ import { audit, positive, requireProject, requireUuid, shortText } from "./share
 
 type BomLine = { itemId: string; quantity: string; notes: string };
 type ChangeLink = { type: "document" | "bomRevision" | "asset" | "productionJob"; id: string };
+type DocumentRevisionEvidence = { linkId: string; revisionId: string };
 
 function parseBomLines(value: unknown): BomLine[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 500) {
@@ -42,6 +43,26 @@ function parseLinks(value: unknown): ChangeLink[] {
   });
 }
 
+function parseDocumentRevisionEvidence(value: unknown): DocumentRevisionEvidence[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new HttpError(400, "INVALID_IMPLEMENTATION_EVIDENCE", "Document revision evidence must be an array of up to 100 records.");
+  }
+  const seen = new Set<string>();
+  return value.map((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new HttpError(400, "INVALID_IMPLEMENTATION_EVIDENCE", "Each document revision record must be an object.");
+    }
+    const record = entry as Record<string, unknown>;
+    const linkId = requireUuid(record.linkId, "linkId");
+    if (seen.has(linkId)) {
+      throw new HttpError(400, "INVALID_IMPLEMENTATION_EVIDENCE", "A linked document can have only one implemented revision.");
+    }
+    seen.add(linkId);
+    return { linkId, revisionId: requireUuid(record.revisionId, "revisionId") };
+  });
+}
+
 export async function listBomRevisions(projectId?: string) {
   const result = await getPool().query(
     "SELECT r.id,r.project_id AS \"projectId\",p.code AS \"projectCode\",r.revision_code AS \"revisionCode\",r.status, " +
@@ -52,6 +73,16 @@ export async function listBomRevisions(projectId?: string) {
       "LEFT JOIN engineering_bom_revision_lines l ON l.bom_revision_id=r.id LEFT JOIN inventory_items i ON i.id=l.item_id " +
       "WHERE ($1::uuid IS NULL OR r.project_id=$1) GROUP BY r.id,p.code,u.display_name ORDER BY r.created_at DESC LIMIT 200",
     [projectId ?? null],
+  );
+  return result.rows;
+}
+
+export async function listApprovedDocumentRevisions() {
+  const result = await getPool().query(
+    "SELECT r.id,r.document_id AS \"documentId\",r.revision,r.file_name AS \"fileName\", " +
+      "d.title,d.kind,d.project_id AS \"projectId\",d.asset_id AS \"assetId\" " +
+      "FROM engineering_revisions r JOIN engineering_documents d ON d.id=r.document_id " +
+      "WHERE r.status='approved' ORDER BY d.title,r.revision DESC LIMIT 500",
   );
   return result.rows;
 }
@@ -93,8 +124,11 @@ export async function transitionBomRevision(id: string, action: unknown, user: A
     if (!result.rowCount) throw new HttpError(404, "NOT_FOUND", "BOM revision not found.");
     const row = result.rows[0];
     await client.query("SELECT id FROM projects WHERE id=$1 FOR UPDATE", [row.project_id]);
-    const expected = action === "submit" ? "draft" : "review";
-    if (row.status !== expected) throw new HttpError(409, "INVALID_TRANSITION", `Only a ${expected} BOM revision can be ${action === "submit" ? "submitted" : "approved"}.`);
+    const expected = action === "submit" ? ["draft", "legacy"] : ["review"];
+    if (!expected.includes(row.status)) {
+      const state = action === "submit" ? "draft or provisional legacy" : "review";
+      throw new HttpError(409, "INVALID_TRANSITION", `Only a ${state} BOM revision can be ${action === "submit" ? "submitted" : "approved"}.`);
+    }
     if (action === "approve") {
       await client.query(
         "UPDATE engineering_bom_revisions SET status='superseded',updated_at=now() WHERE project_id=$1 AND status='approved' AND id<>$2",
@@ -121,12 +155,25 @@ export async function listChangeOrders(projectId?: string) {
       "c.status,c.created_at AS \"createdAt\",u.display_name AS \"requestedBy\",c.approved_at AS \"approvedAt\", " +
       "COALESCE(jsonb_agg(jsonb_build_object('type',CASE WHEN l.document_id IS NOT NULL THEN 'document' " +
       "WHEN l.bom_revision_id IS NOT NULL THEN 'bomRevision' WHEN l.asset_id IS NOT NULL THEN 'asset' ELSE 'productionJob' END, " +
-      "'id',COALESCE(l.document_id,l.bom_revision_id,l.asset_id,l.production_job_id)) ORDER BY l.created_at) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS links " +
+      "'id',COALESCE(l.document_id,l.bom_revision_id,l.asset_id,l.production_job_id),'linkId',l.id,'documentTitle',d.title) " +
+      "ORDER BY l.created_at) FILTER(WHERE l.id IS NOT NULL),'[]'::jsonb) AS links " +
       ",(SELECT COALESCE(jsonb_agg(jsonb_build_object('action',h.action,'notes',h.notes,'actorName',a.display_name, " +
       "'createdAt',h.created_at) ORDER BY h.created_at),'[]'::jsonb) FROM engineering_change_approvals h " +
       "JOIN users a ON a.id=h.actor_id WHERE h.change_order_id=c.id) AS approvals " +
+      ",(SELECT COALESCE(jsonb_agg(jsonb_build_object('linkId',e.change_order_link_id,'linkType',CASE " +
+      "WHEN el.document_id IS NOT NULL THEN 'document' WHEN el.bom_revision_id IS NOT NULL THEN 'bomRevision' " +
+      "WHEN el.asset_id IS NOT NULL THEN 'asset' ELSE 'productionJob' END,'documentTitle',ed.title, " +
+      "'documentRevisionId',e.document_revision_id,'revision',dr.revision,'bomRevisionId',e.bom_revision_id, " +
+      "'bomRevisionCode',br.revision_code,'notes',e.notes,'verifiedBy',v.display_name,'verifiedAt',e.verified_at) " +
+      "ORDER BY e.verified_at),'[]'::jsonb) FROM engineering_change_implementation_evidence e " +
+      "JOIN engineering_change_links el ON el.id=e.change_order_link_id " +
+      "LEFT JOIN engineering_documents ed ON ed.id=el.document_id " +
+      "LEFT JOIN engineering_revisions dr ON dr.id=e.document_revision_id " +
+      "LEFT JOIN engineering_bom_revisions br ON br.id=e.bom_revision_id " +
+      "JOIN users v ON v.id=e.verified_by WHERE el.change_order_id=c.id) AS \"implementationEvidence\" " +
       "FROM engineering_change_orders c JOIN projects p ON p.id=c.project_id JOIN users u ON u.id=c.requested_by " +
       "LEFT JOIN engineering_assets a ON a.id=c.asset_id LEFT JOIN engineering_change_links l ON l.change_order_id=c.id " +
+      "LEFT JOIN engineering_documents d ON d.id=l.document_id " +
       "WHERE ($1::uuid IS NULL OR c.project_id=$1) GROUP BY c.id,p.code,a.asset_tag,u.display_name ORDER BY c.created_at DESC LIMIT 200",
     [projectId ?? null],
   );
@@ -195,6 +242,13 @@ export async function transitionChangeOrder(
     throw new HttpError(400, "INVALID_ACTION", "Choose submit, approve, reject, or implement.");
   }
   const notes = body.notes === undefined || body.notes === "" ? "" : shortText(body.notes, "notes", 2000);
+  if (action === "implement" && !notes) {
+    throw new HttpError(400, "IMPLEMENTATION_NOTES_REQUIRED", "Provide verification and implementation notes before implementing this change.");
+  }
+  if (action !== "implement" && body.documentRevisions !== undefined) {
+    throw new HttpError(400, "INVALID_IMPLEMENTATION_EVIDENCE", "Document revisions can only be supplied when implementing a change.");
+  }
+  const documentRevisions = action === "implement" ? parseDocumentRevisionEvidence(body.documentRevisions) : [];
   if ((action === "approve" || action === "reject" || action === "implement") && user.role !== "admin") {
     throw new HttpError(403, "FORBIDDEN", "Only an administrator can approve, reject, or implement an engineering change.");
   }
@@ -213,19 +267,58 @@ export async function transitionChangeOrder(
         action === "reject" ? "rejected" : "implemented";
       throw new HttpError(409, "INVALID_TRANSITION", `A ${status} change order cannot be ${verb}.`);
     }
+    let implementationEvidenceCount = 0;
     if (action === "implement") {
-      const unapproved = await client.query(
-        "SELECT 1 FROM engineering_change_links l JOIN engineering_bom_revisions b ON b.id=l.bom_revision_id " +
-          "WHERE l.change_order_id=$1 AND b.status<>'approved' LIMIT 1",
+      const links = await client.query<{
+        id: string; document_id: string | null; bom_revision_id: string | null;
+      }>(
+        "SELECT id,document_id,bom_revision_id FROM engineering_change_links WHERE change_order_id=$1 ORDER BY id FOR UPDATE",
         [id],
       );
-      if (unapproved.rowCount) throw new HttpError(409, "BOM_NOT_APPROVED", "All linked BOM revisions must be approved before implementation.");
+      const documentLinks = links.rows.filter((link) => link.document_id !== null);
+      if (documentRevisions.length !== documentLinks.length ||
+          documentRevisions.some((evidence) => !documentLinks.some((link) => link.id === evidence.linkId))) {
+        throw new HttpError(409, "REVISION_EVIDENCE_REQUIRED", "Select an approved revision for every linked engineering document.");
+      }
+
+      const revisionsByLink = new Map(documentRevisions.map((evidence) => [evidence.linkId, evidence.revisionId]));
+      for (const link of links.rows) {
+        if (link.document_id) {
+          const revision = await client.query(
+            "SELECT id FROM engineering_revisions WHERE id=$1 AND document_id=$2 AND status='approved' FOR SHARE",
+            [revisionsByLink.get(link.id), link.document_id],
+          );
+          if (!revision.rowCount) {
+            throw new HttpError(409, "REVISION_NOT_APPROVED", "Implementation evidence must reference an approved revision of its linked document.");
+          }
+        } else if (link.bom_revision_id) {
+          const bom = await client.query(
+            "SELECT id FROM engineering_bom_revisions WHERE id=$1 AND status='approved' FOR SHARE",
+            [link.bom_revision_id],
+          );
+          if (!bom.rowCount) {
+            throw new HttpError(409, "BOM_NOT_APPROVED", "All linked BOM revisions must be approved before implementation.");
+          }
+        }
+      }
+
+      for (const link of links.rows) {
+        await client.query(
+          "INSERT INTO engineering_change_implementation_evidence " +
+            "(change_order_link_id,document_revision_id,bom_revision_id,notes,verified_by) VALUES($1,$2,$3,$4,$5)",
+          [link.id, revisionsByLink.get(link.id) ?? null, link.bom_revision_id, notes, user.id],
+        );
+      }
+      implementationEvidenceCount = links.rowCount ?? links.rows.length;
     }
     const next = action === "submit" ? "review" : action === "reject" ? "rejected" : action === "approve" ? "approved" : "implemented";
     if (action === "approve") {
       await client.query("UPDATE engineering_change_orders SET status=$2,approved_by=$3,approved_at=now(),updated_at=now() WHERE id=$1", [id, next, user.id]);
     } else if (action === "implement") {
-      await client.query("UPDATE engineering_change_orders SET status=$2,implemented_by=$3,implemented_at=now(),updated_at=now() WHERE id=$1", [id, next, user.id]);
+      await client.query(
+        "UPDATE engineering_change_orders SET status=$2,implemented_by=$3,implemented_at=now(),implementation_notes=$4,updated_at=now() WHERE id=$1",
+        [id, next, user.id, notes],
+      );
     } else {
       await client.query("UPDATE engineering_change_orders SET status=$2,updated_at=now() WHERE id=$1", [id, next]);
     }
@@ -234,8 +327,8 @@ export async function transitionChangeOrder(
       [id, action === "submit" ? "submitted" : action === "implement" ? "implemented" : action === "approve" ? "approved" : "rejected", notes, user.id],
     );
     await audit(client, user, `engineering.change_order.${action}`, "engineering_change_order", id, {
-      from: status, to: next, notes,
+      from: status, to: next, notes, ...(action === "implement" ? { implementationEvidenceCount } : {}),
     });
-    return { id, status: next };
+    return { id, status: next, ...(action === "implement" ? { implementationEvidenceCount } : {}) };
   });
 }

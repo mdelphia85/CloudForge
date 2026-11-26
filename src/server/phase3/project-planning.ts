@@ -5,7 +5,7 @@ import { HttpError } from "@/server/errors";
 import { audit, nonNegativeMoney, optionalDate, optionalText, positive, requireUuid, shortText } from "./shared";
 import { getMaterialShortages } from "./materials";
 
-export async function getProjectPlanning(projectId: string) {
+export async function getProjectPlanning(projectId: string, user: AuthenticatedUser) {
   const [project, tasks, milestones, resources, costs, dependencies, milestoneDependencies, readiness,
     purchaseOrders, productionJobs, serviceJobs, engineeringDocuments] = await Promise.all([
     getPool().query(
@@ -61,8 +61,8 @@ export async function getProjectPlanning(projectId: string) {
     getPool().query(
       "SELECT s.id,s.title,s.status,s.scheduled_date,a.asset_tag,a.name AS asset_name,u.display_name AS technician_name " +
         "FROM field_service_jobs s JOIN engineering_assets a ON a.id=s.asset_id LEFT JOIN users u ON u.id=s.assigned_to " +
-        "WHERE s.project_id=$1 ORDER BY s.created_at DESC",
-      [projectId],
+        "WHERE s.project_id=$1 AND ($2::uuid IS NULL OR s.assigned_to=$2) ORDER BY s.created_at DESC",
+      [projectId, user.role === "viewer" ? user.id : null],
     ),
     getPool().query(
       "SELECT d.id,d.title,d.kind,(SELECT count(*)::int FROM engineering_revisions r WHERE r.document_id=d.id) AS revisions," +
@@ -215,13 +215,32 @@ export async function updateProjectPlanning(
         throw new HttpError(400, "INVALID_ALLOCATION", "Allocation must be greater than 0 and no more than 100 percent.");
       }
       if (startsOn && endsOn && endsOn < startsOn) throw new HttpError(400, "INVALID_DATES", "Resource end date cannot precede its start date.");
-      const found = await client.query("SELECT id FROM users WHERE id=$1 AND is_active=true", [userId]);
+      const found = await client.query("SELECT id FROM users WHERE id=$1 AND is_active=true FOR UPDATE", [userId]);
       if (!found.rowCount) throw new HttpError(404, "USER_NOT_FOUND", "Project resource is not active.");
       const assigned = await client.query<{ allocation: string }>(
-        "SELECT coalesce(sum(allocation_percent),0)::text AS allocation FROM project_resources WHERE project_id=$1 AND user_id=$2",
-        [projectId, userId],
+        `WITH existing AS (
+           SELECT allocation_percent,
+             COALESCE(starts_on,'-infinity'::date) AS starts_on,
+             COALESCE(ends_on,'infinity'::date) AS ends_on
+           FROM project_resources
+           WHERE user_id=$1
+             AND COALESCE(starts_on,'-infinity'::date)<=COALESCE($3::date,'infinity'::date)
+             AND COALESCE(ends_on,'infinity'::date)>=COALESCE($2::date,'-infinity'::date)
+         ), boundaries AS (
+           SELECT COALESCE($2::date,'-infinity'::date) AS day
+           UNION
+           SELECT starts_on FROM existing
+           WHERE starts_on>COALESCE($2::date,'-infinity'::date)
+             AND starts_on<=COALESCE($3::date,'infinity'::date)
+         )
+         SELECT COALESCE(MAX($4::numeric+(
+           SELECT COALESCE(SUM(e.allocation_percent),0)
+           FROM existing e WHERE e.starts_on<=b.day AND e.ends_on>=b.day
+         )),0)::text AS allocation
+         FROM boundaries b`,
+        [userId, startsOn, endsOn, allocation],
       );
-      if (Number(assigned.rows[0].allocation) + Number(allocation) > 100) {
+      if (Number(assigned.rows[0].allocation) > 100) {
         throw new HttpError(409, "ALLOCATION_EXCEEDED", "A team member's project allocation cannot exceed 100 percent.");
       }
       const created = await client.query<{ id: string }>(
