@@ -13,6 +13,8 @@ async function applyMigrationsThrough(lastMigration: string) {
   const pool = testPool();
   const client = await pool.connect();
   try {
+    await client.query("DROP SCHEMA public CASCADE");
+    await client.query("CREATE SCHEMA public");
     await client.query("SET search_path TO public");
     await client.query(
       "CREATE TABLE public.schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
@@ -50,8 +52,6 @@ describe("Phase 2 BOM migration provenance", () => {
 
   it("keeps operator-authored legacy BOMs provisional until an explicit engineering approval", async () => {
     await resetDatabase();
-    await testPool().query("DROP SCHEMA public CASCADE");
-    await testPool().query("CREATE SCHEMA public");
     await applyMigrationsThrough("003_phase2_operations.sql");
 
     const handlers = await loadHandlers();
