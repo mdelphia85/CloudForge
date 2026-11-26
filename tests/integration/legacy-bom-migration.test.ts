@@ -13,8 +13,9 @@ async function applyMigrationsThrough(lastMigration: string) {
   const pool = testPool();
   const client = await pool.connect();
   try {
+    await client.query("SET search_path TO public");
     await client.query(
-      "CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+      "CREATE TABLE public.schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
     );
     const directory = join(process.cwd(), "migrations");
     const files = (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
