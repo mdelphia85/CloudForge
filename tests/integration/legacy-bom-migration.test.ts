@@ -133,9 +133,9 @@ describe("Phase 2 BOM migration provenance", () => {
     });
     expect(approved.body.shortages[0]).toMatchObject({ bomStatus: "approved", demandStatus: "approved" });
     const approvalHistory = await testPool().query(
-      "SELECT action,actor_id FROM audit_events WHERE entity_type='engineering_bom_revision' AND entity_id=$1",
+      "SELECT action,actor_user_id FROM audit_events WHERE entity_type='engineering_bom_revision' AND entity_id=$1",
       [legacyId],
     );
-    expect(approvalHistory.rows).toEqual([{ action: "engineering.bom_revision.approved", actor_id: actors.admin.id }]);
+    expect(approvalHistory.rows).toEqual([{ action: "engineering.bom_revision.approved", actor_user_id: actors.admin.id }]);
   });
 });
