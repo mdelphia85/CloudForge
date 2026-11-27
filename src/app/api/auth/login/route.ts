@@ -3,7 +3,7 @@ import { createSession, newSessionToken, sessionCookieOptions } from "@/server/a
 import { getPool } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { verifyPassword } from "@/server/password";
-import { clearLoginFailures, isLoginBlocked, recordFailedLogin } from "@/server/login-rate-limit";
+import { clearLoginFailures, isLoginBlocked, recordBlockedLogin, recordFailedLogin } from "@/server/login-rate-limit";
 
 const DUMMY_HASH = `scrypt$32768$8$1$${"0".repeat(32)}$${"0".repeat(128)}`;
 
@@ -18,6 +18,7 @@ export async function POST(request: Request) {
     }
 
     if (await isLoginBlocked(email)) {
+      await recordBlockedLogin(email);
       throw new HttpError(429, "TOO_MANY_ATTEMPTS", "Too many sign-in attempts. Try again later.");
     }
 
@@ -27,8 +28,9 @@ export async function POST(request: Request) {
       display_name: string;
       role: "admin" | "operator" | "viewer";
       password_hash: string;
+      session_epoch: number;
     }>(
-      `SELECT id, email, display_name, role, password_hash
+      `SELECT id, email, display_name, role, password_hash, session_epoch
          FROM users WHERE email = $1 AND is_active = true`,
       [email],
     );
@@ -44,7 +46,14 @@ export async function POST(request: Request) {
     await clearLoginFailures(email);
 
     const sessionToken = newSessionToken();
-    await createSession(user.id, sessionToken);
+    try {
+      await createSession(user.id, sessionToken, "auth.login", user.session_epoch);
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "INVALID_CREDENTIALS") {
+        await recordFailedLogin(email);
+      }
+      throw error;
+    }
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
     });

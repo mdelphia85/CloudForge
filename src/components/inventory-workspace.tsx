@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 
 type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer" };
+type ManagedUser = User & { isActive: boolean };
 type Item = {
   sku: string; name: string; category: string; location: string; bin: string;
   onHand: string; reorder: string; unit: string;
@@ -39,7 +40,8 @@ export default function InventoryWorkspace() {
   const [movements, setMovements] = useState<Movement[]>([]);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("All locations");
-  const [modal, setModal] = useState<"item" | "movement" | "user" | null>(null);
+  const [modal, setModal] = useState<"item" | "movement" | "user" | "accounts" | null>(null);
+  const [accounts, setAccounts] = useState<ManagedUser[]>([]);
   const [movementType, setMovementType] = useState("receipt");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -152,6 +154,36 @@ export default function InventoryWorkspace() {
     }
   }
 
+  async function loadAccounts() {
+    setError("");
+    try {
+      const result = await requestJson<{ users: ManagedUser[] }>("/api/users");
+      setAccounts(result.users);
+      setModal("accounts");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load accounts.");
+    }
+  }
+
+  async function manageAccount(account: ManagedUser, action: "disable" | "enable" | "revoke_sessions") {
+    const description = action === "revoke_sessions" ? "Revoke all sessions for" : `${action === "disable" ? "Disable" : "Enable"}`;
+    if (!window.confirm(`${description} ${account.displayName}?`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await requestJson(`/api/users/${account.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      await loadAccounts();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update account.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <main className="auth-screen"><div className="auth-card"><span className="brand-mark"><Boxes size={18} /></span><p className="eyebrow">CloudForge</p><h1>Connecting to your workspace</h1><p className="subtitle">Verifying the local session and inventory service.</p></div></main>;
   }
@@ -221,6 +253,7 @@ export default function InventoryWorkspace() {
           <div className="topbar-actions">
             <span className="sync-status"><i />Connected</span>
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => { setError(""); setModal("user"); }}><Users size={15} /> Add user</button>}
+            {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => void loadAccounts()}><Users size={15} /> Manage accounts</button>}
             <button className="icon-button" aria-label="Refresh inventory" onClick={() => void refreshItems().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Refresh failed."))}><RefreshCw size={17} /></button>
             <button className="icon-button mobile-signout" aria-label="Sign out" onClick={() => void signOut()} disabled={saving}><LogOut size={15} /></button>
           </div>
@@ -282,7 +315,19 @@ export default function InventoryWorkspace() {
 
       {modal && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}>
         <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-          <div className="modal-heading"><div><p className="eyebrow">{modal === "item" ? "Inventory master" : modal === "user" ? "Local accounts" : "Inventory movement"}</p><h2 id="modal-title">{modal === "item" ? "Add an item" : modal === "user" ? "Create local account" : "Record stock movement"}</h2></div><button className="modal-close" onClick={() => setModal(null)} aria-label="Close dialog">×</button></div>
+          <div className="modal-heading"><div><p className="eyebrow">{modal === "item" ? "Inventory master" : modal === "user" || modal === "accounts" ? "Local accounts" : "Inventory movement"}</p><h2 id="modal-title">{modal === "item" ? "Add an item" : modal === "user" ? "Create local account" : modal === "accounts" ? "Manage accounts" : "Record stock movement"}</h2></div><button className="modal-close" onClick={() => setModal(null)} aria-label="Close dialog">×</button></div>
+          {modal === "accounts" && <div>
+            <p className="workflow-note">Disabling an account revokes its sessions. The last active administrator cannot be disabled.</p>
+            <div className="table-scroll"><table><thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>{accounts.map((account) => <tr key={account.id}>
+                <td>{account.displayName}<br /><small>{account.email}</small></td>
+                <td>{account.role}</td><td>{account.isActive ? "Active" : "Disabled"}</td>
+                <td>
+                  <button type="button" className="secondary-button compact-button" disabled={saving || account.id === user.id} onClick={() => void manageAccount(account, account.isActive ? "disable" : "enable")}>{account.isActive ? "Disable" : "Enable"}</button>{" "}
+                  <button type="button" className="secondary-button compact-button" disabled={saving || account.id === user.id} onClick={() => void manageAccount(account, "revoke_sessions")}>Revoke sessions</button>
+                </td>
+              </tr>)}</tbody></table></div>
+          </div>}
           {modal === "item" && <form onSubmit={(event) => submitForm(event, "/api/inventory")}>
             <div className="form-grid">
               <label>Item name<input name="name" required maxLength={200} /></label>

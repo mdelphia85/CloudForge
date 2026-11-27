@@ -63,11 +63,18 @@ describe("audit trail coverage", () => {
     expect((await testPool().query("SELECT count(*)::int AS n FROM audit_events")).rows[0].n).toBe(before);
   });
 
-  it("links every audit event and movement to a real user", async () => {
+  it("links attributed audit events and movements to real users", async () => {
     const orphans = await testPool().query(
-      `SELECT (SELECT count(*) FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id WHERE u.id IS NULL)::int AS audit,
+      `SELECT (SELECT count(*) FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id WHERE a.actor_user_id IS NOT NULL AND u.id IS NULL)::int AS audit,
               (SELECT count(*) FROM inventory_movements m LEFT JOIN users u ON u.id = m.actor_user_id WHERE u.id IS NULL)::int AS moves`);
     expect(orphans.rows[0]).toEqual({ audit: 0, moves: 0 });
+  });
+
+  it("restricts anonymous audit events to authentication failures", async () => {
+    const invalid = await rejects(
+      "INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id) VALUES (NULL,'inventory.issue','inventory',NULL)",
+    );
+    expect(invalid.code).toBe("23514");
   });
 });
 
@@ -162,6 +169,10 @@ describe("migrations", () => {
       "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
       "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
       "005_phase3_review_corrections.sql", "006_phase4_equipment_maintenance_telemetry.sql",
+      "007_phase5_account_controls.sql", "008_phase5_equipment_alarms.sql",
+      "009_phase5_failed_login_audit.sql",
+      "010_phase5_industrial_gateways.sql",
+      "011_phase5_alarm_source_state.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -176,8 +187,10 @@ describe("migrations", () => {
       "engineering_assets", "engineering_bom_lines",
       "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
       "engineering_change_implementation_evidence", "engineering_change_links", "engineering_change_orders",
-      "engineering_documents", "engineering_revisions",
+      "engineering_documents", "engineering_revisions", "equipment_alarm_events",
+      "equipment_alarm_rule_source_state", "equipment_alarm_rules", "equipment_alarms",
       "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
+      "gateway_allowed_tags", "gateway_telemetry_batches", "industrial_gateways",
       "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
       "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",
       "maintenance_work_order_cost_events", "maintenance_work_order_events", "maintenance_work_order_parts",

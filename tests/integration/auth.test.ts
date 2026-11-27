@@ -235,5 +235,89 @@ describe("login and logout", () => {
     expect(response.body.code).toBe("TOO_MANY_ATTEMPTS");
   });
 
-  it.todo("records failed login attempts in the audit log (not implemented - see Phase 1 report)");
+  it("audits failed and throttled logins without attributing them to a user or recording credentials", async () => {
+    const email = "audit-unknown@example.test";
+    const password = "Wrong-Password-123!";
+    const knownEmail = "audit-known@example.test";
+    await testPool().query(
+      "INSERT INTO users (email, display_name, password_hash, role) " +
+      "SELECT $1, 'Audit Test', password_hash, 'viewer' FROM users WHERE email='owner@example.test'",
+      [knownEmail],
+    );
+    const known = await login({ email: knownEmail, password });
+    expect(known.status).toBe(401);
+    for (let i = 0; i < 9; i++) {
+      const response = await login({ email, password });
+      expect(response.status).toBe(i < 7 ? 401 : 429);
+    }
+
+    const events = await testPool().query(
+      "SELECT actor_user_id, entity_id, details FROM audit_events " +
+      "WHERE action='auth.login_failed' AND details->>'identifierHash' = $1 ORDER BY occurred_at",
+      [hashToken(email)],
+    );
+    expect(events.rows).toHaveLength(9);
+    expect(events.rows.every((event) => event.actor_user_id === null && event.entity_id === null)).toBe(true);
+    expect(events.rows.map((event) => event.details.blocked)).toEqual([
+      false, false, false, false, false, false, false, true, true,
+    ]);
+    expect(JSON.stringify(events.rows)).not.toContain(email);
+    expect(JSON.stringify(events.rows)).not.toContain(password);
+    const knownEvents = await testPool().query(
+      "SELECT actor_user_id, entity_id FROM audit_events WHERE action='auth.login_failed' AND details->>'identifierHash'=$1",
+      [hashToken(knownEmail)],
+    );
+    expect(knownEvents.rows).toEqual([{ actor_user_id: null, entity_id: null }]);
+  });
+});
+
+describe("administrator account controls", () => {
+  it("restricts account administration, revokes sessions, and prevents restoration of disabled sessions", async () => {
+    await resetDatabase();
+    const accountRoute = await import("@/app/api/users/[id]/route");
+    const admin = await call(h.bootstrap.POST, { method: "POST", body: bootstrapBody() });
+    const created = await call(h.users.POST, {
+      method: "POST", cookie: admin.sessionCookie,
+      body: { email: "worker@example.test", displayName: "Worker", role: "operator", password: STRONG_PASSWORD },
+    });
+    expect(created.status).toBe(201);
+    const workerId = String(created.body.user.id);
+    const signIn = () => call(h.login.POST, {
+      method: "POST", body: { email: "worker@example.test", password: STRONG_PASSWORD },
+    });
+    const action = (id: string, cookie: string | null, value: string) => accountRoute.PATCH(
+      new Request(`http://localhost:3000/api/users/${id}`, {
+        method: "PATCH",
+        headers: { origin: "http://localhost:3000", cookie: cookie ?? "", "content-type": "application/json" },
+        body: JSON.stringify({ action: value }),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+    const worker = await signIn();
+    expect(worker.status).toBe(200);
+    const epoch = (await testPool().query("SELECT session_epoch FROM users WHERE id = $1", [workerId])).rows[0].session_epoch as number;
+    expect((await call(h.users.GET, { cookie: worker.sessionCookie })).status).toBe(403);
+    expect((await action(workerId, worker.sessionCookie, "disable")).status).toBe(403);
+    expect((await action(String(admin.body.user.id), admin.sessionCookie, "disable")).status).toBe(409);
+
+    const revoked = await action(workerId, admin.sessionCookie, "revoke_sessions");
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).revokedSessions).toBe(1);
+    const { createSession, newSessionToken } = await import("@/server/auth");
+    await expect(createSession(workerId, newSessionToken(), "auth.login", epoch)).rejects.toMatchObject({
+      status: 401, code: "INVALID_CREDENTIALS",
+    });
+    expect((await call(h.status.GET, { cookie: worker.sessionCookie })).body.user).toBeNull();
+    const nextSession = await signIn();
+    expect(nextSession.status).toBe(200);
+    expect((await action(workerId, admin.sessionCookie, "disable")).status).toBe(200);
+    expect((await signIn()).status).toBe(401);
+    expect((await action(workerId, admin.sessionCookie, "enable")).status).toBe(200);
+    expect((await call(h.status.GET, { cookie: nextSession.sessionCookie })).body.user).toBeNull();
+    expect((await signIn()).status).toBe(200);
+    const audit = await testPool().query("SELECT action FROM audit_events WHERE entity_type='user' AND entity_id=$1", [workerId]);
+    expect(audit.rows.map((row) => row.action)).toEqual(expect.arrayContaining([
+      "user.revoke_sessions", "user.disable", "user.enable",
+    ]));
+  });
 });

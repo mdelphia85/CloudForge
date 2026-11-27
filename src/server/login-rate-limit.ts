@@ -20,10 +20,18 @@ export async function isLoginBlocked(email: string): Promise<boolean> {
   return result.rows[0]?.blocked === true;
 }
 
+export async function recordBlockedLogin(email: string): Promise<void> {
+  await getPool().query(
+    "INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details) " +
+    "VALUES (NULL, 'auth.login_failed', 'authentication', NULL, jsonb_build_object('identifierHash', $1::text, 'blocked', true))",
+    [identifierHash(email)],
+  );
+}
+
 export async function recordFailedLogin(email: string): Promise<boolean> {
   const restart = "auth_login_attempts.window_started_at < now() - ($2 * interval '1 minute') " +
     "OR (auth_login_attempts.blocked_until IS NOT NULL AND auth_login_attempts.blocked_until <= now())";
-  const sql = "INSERT INTO auth_login_attempts " +
+  const sql = "WITH attempt AS (INSERT INTO auth_login_attempts " +
     "(identifier_hash, attempts, window_started_at, blocked_until, updated_at) " +
     "VALUES ($1, 1, now(), null, now()) " +
     "ON CONFLICT (identifier_hash) DO UPDATE SET " +
@@ -36,7 +44,11 @@ export async function recordFailedLogin(email: string): Promise<boolean> {
     "THEN now() + ($2 * interval '1 minute') " +
     "ELSE auth_login_attempts.blocked_until END, " +
     "updated_at = now() " +
-    "RETURNING COALESCE(blocked_until > now(), false) AS blocked";
+    "RETURNING COALESCE(blocked_until > now(), false) AS blocked), " +
+    "event AS (INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details) " +
+    "SELECT NULL, 'auth.login_failed', 'authentication', NULL, " +
+    "jsonb_build_object('identifierHash', $1::text, 'blocked', blocked) FROM attempt RETURNING id) " +
+    "SELECT attempt.blocked FROM attempt CROSS JOIN event";
   const result = await getPool().query<{ blocked: boolean }>(
     sql,
     [identifierHash(email), WINDOW_MINUTES, MAX_FAILURES],

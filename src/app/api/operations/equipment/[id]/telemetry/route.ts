@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: Context) {
   try {
     const user = await requireUser(request);
     const { id } = await params;
-    return NextResponse.json(await getTelemetryStatus(requireUuid(id, "equipmentId"), user), {
+    return NextResponse.json(await getTelemetryStatus(requireUuid(id, "equipmentId"), user, new URL(request.url).searchParams.get("provider")), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

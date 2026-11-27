@@ -1,0 +1,21 @@
+{
+  "name": "cloudforge-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "keygen": "node src/keygen.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "node-opcua-certificate-manager": "2.187.35",
+    "node-opcua-client": "2.187.35"
+  },
+  "devDependencies": {
+    "node-opcua": "2.188.0"
+  }
+}

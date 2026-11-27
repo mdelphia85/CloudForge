@@ -4,6 +4,23 @@ import { inTransaction } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { hashPassword, isValidPassword } from "@/server/password";
 
+export async function GET(request: Request) {
+  try {
+    const actor = await requireUser(request);
+    requireRole(actor, "admin");
+    const users = await inTransaction(async (client) => {
+      const result = await client.query(
+        `SELECT id, email, display_name AS "displayName", role, is_active AS "isActive"
+         FROM users ORDER BY display_name, id`,
+      );
+      return result.rows;
+    });
+    return NextResponse.json({ users }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     requireSameOrigin(request);
