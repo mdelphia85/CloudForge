@@ -25,6 +25,7 @@ type Point = { timestamp: string; value: string; numericValue?: string | null; q
 type History = { tag: { label: string; unit: string }; points: Point[] };
 type Metrics = { mtbfSeconds: number | null; mttrSeconds: number | null; availabilityPercent: number; downtimeSeconds: number; failureCount: number };
 type Analytics = { days: number; from: string; to: string; equipment: Array<{ assetId: string; assetTag: string; name: string; metrics: Metrics; failureHistory: Row[] }> };
+type AlarmData = { assetId: string; rules: Row[]; alarms: Row[] };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store" });
@@ -97,6 +98,7 @@ export default function EquipmentWorkspace() {
   const [options, setOptions] = useState<Options>({ equipment: [], users: [], items: [], projects: [] });
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryStatus | null>(null);
+  const [alarmData, setAlarmData] = useState<AlarmData | null>(null);
   const [history, setHistory] = useState<History | null>(null);
   const [equipmentDetail, setEquipmentDetail] = useState<EquipmentDetail | null>(null);
   const [detailAssetId, setDetailAssetId] = useState("");
@@ -117,6 +119,7 @@ export default function EquipmentWorkspace() {
   const selectedAsset = equipment.find((item) => item.id === selectedAssetId) ?? null;
   const selectedWorkOrder = workOrders.find((item) => item.id === selectedWorkOrderId) ?? null;
   const selectedTelemetry = telemetry?.assetId === selectedAssetId ? telemetry : null;
+  const selectedAlarms = alarmData?.assetId === selectedAssetId ? alarmData : null;
   const selectedDowntime = downtimeAssetId === selectedAssetId ? downtime : [];
   const selectedEquipmentDetail = detailAssetId === selectedAssetId ? equipmentDetail : null;
 
@@ -157,13 +160,14 @@ export default function EquipmentWorkspace() {
 
   const loadTelemetry = useCallback(async () => {
     if (!selectedAssetId) return;
-    const [status, downtimeData] = await Promise.all([
+    const [status, downtimeData, alarms] = await Promise.all([
       api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry`),
       api<{ downtime: Row[] }>(`/api/operations/equipment/${selectedAssetId}/downtime`),
+      api<{ rules: Row[]; alarms: Row[] }>(`/api/operations/equipment/${selectedAssetId}/alarms`),
     ]);
     setTelemetry(status);
+    setAlarmData({ assetId: selectedAssetId, ...alarms });
     setDowntime(downtimeData.downtime);
-    setDowntimeAssetId(selectedAssetId);
     setDowntimeAssetId(selectedAssetId);
     setSelectedTagId((current) => current && status.tags.some((tag) => tag.id === current)
       ? current
@@ -176,10 +180,13 @@ export default function EquipmentWorkspace() {
     void Promise.all([
       api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry`),
       api<{ downtime: Row[] }>(`/api/operations/equipment/${selectedAssetId}/downtime`),
-    ]).then(([status, downtimeData]) => {
+      api<{ rules: Row[]; alarms: Row[] }>(`/api/operations/equipment/${selectedAssetId}/alarms`),
+    ]).then(([status, downtimeData, alarms]) => {
       if (!active) return;
       setTelemetry(status);
+      setAlarmData({ assetId: selectedAssetId, ...alarms });
       setDowntime(downtimeData.downtime);
+      setDowntimeAssetId(selectedAssetId);
       setSelectedTagId((current) => current && status.tags.some((tag) => tag.id === current)
         ? current
         : String(status.tags.find((tag) => tag.semanticType === "metric" && tag.dataType === "number")?.id ?? ""));
@@ -509,6 +516,50 @@ export default function EquipmentWorkspace() {
                   </table>
                 </div>
               </>}
+            </div>
+            <div className="mt-5">
+              <h3 className="mb-2 text-xs font-bold">Equipment alarms</h3>
+              <p className="mb-2 text-xs text-slate-600">CloudForge acknowledgement does not reset a PLC or safety system. Alarms clear only when a fresh, good reading no longer matches.</p>
+              <ol className="space-y-2 text-xs">
+                {(selectedAlarms?.alarms ?? []).map((entry) => <li key={String(entry.id)} className="rounded border p-2">
+                  <strong>{String(entry.name)} · {String(entry.severity)} · {entry.clearedAt ? "cleared" : "active"}</strong>
+                  <p>Triggered {format(entry.triggeredAt)} · value {format(entry.triggerValue)} · {entry.acknowledgedAt ? `acknowledged by ${format(entry.acknowledgedBy)} at ${format(entry.acknowledgedAt)}` : "not acknowledged"}</p>
+                  {canManage && !entry.acknowledgedAt && <Button tone="secondary" disabled={busy} onClick={() => void run(
+                    () => api(`/api/operations/equipment/${selectedAsset.id}/alarms/${String(entry.id)}`, { method: "POST" }),
+                    "Alarm acknowledged in CloudForge only.",
+                  )}>Acknowledge</Button>}
+                  <details><summary>History</summary><ol>{(entry.events as Row[]).map((event, index) =>
+                    <li key={`${String(event.at)}-${index}`}>{String(event.action)} · {format(event.at)} · {format(event.actor)} {event.value != null ? `· ${format(event.value)}` : ""}</li>
+                  )}</ol></details>
+                </li>)}
+                {!selectedAlarms?.alarms.length && <li className="text-slate-500">No alarms recorded.</li>}
+              </ol>
+              {canManage && <details className="mt-3 rounded border p-3">
+                <summary className="cursor-pointer text-xs font-bold">Add an alarm rule</summary>
+                <form className="mt-3 grid gap-2 sm:grid-cols-2" onSubmit={submit(async (values) => {
+                  await api(`/api/operations/equipment/${selectedAsset.id}/alarms`, {
+                    method: "POST", headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ name: values.name, tagId: values.tagId, condition: values.condition,
+                      threshold: values.threshold, severity: values.severity, debounceSamples: Number(values.debounceSamples) }),
+                  });
+                }, "Alarm rule added.")}>
+                  <Field label="Rule name" name="name" required/>
+                  <Select label="Telemetry tag" name="tagId" required options={(selectedTelemetry?.tags ?? []).map((tag) => ({ value: tag.id, label: tag.label }))}/>
+                  <Select label="Condition" name="condition" required options={["above","below","equals"].map((value) => ({ value, label: value }))}/>
+                  <Field label="Threshold or state" name="threshold" required/>
+                  <Select label="Severity" name="severity" required options={["low","medium","high","critical"].map((value) => ({ value, label: value }))}/>
+                  <Field label="Consecutive matching samples (1–10)" name="debounceSamples" type="number" min="1" defaultValue="1" required/>
+                  <div><Button type="submit" disabled={busy}>Add rule</Button></div>
+                </form>
+                <ul className="mt-3 text-xs">{(selectedAlarms?.rules ?? []).map((rule) => <li key={String(rule.id)}>
+                  {String(rule.name)} · {String(rule.tagLabel)} {String(rule.condition)} {String(rule.threshold)} · {String(rule.severity)} · {String(rule.debounceSamples)} sample(s) · {rule.enabled ? "enabled" : "paused"}{" "}
+                  <button type="button" className="text-teal-800 underline" disabled={busy} onClick={() => void run(
+                    () => api(`/api/operations/equipment/${selectedAsset.id}/alarms/rules/${String(rule.id)}`, {
+                      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: !rule.enabled }),
+                    }), rule.enabled ? "Alarm rule paused." : "Alarm rule enabled.",
+                  )}>{rule.enabled ? "Pause" : "Enable"}</button>
+                </li>)}</ul>
+              </details>}
             </div>
             <div className="mt-5">
               <h3 className="mb-2 text-xs font-bold">State and alarm timeline</h3>

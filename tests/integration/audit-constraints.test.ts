@@ -162,7 +162,7 @@ describe("migrations", () => {
       "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
       "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
       "005_phase3_review_corrections.sql", "006_phase4_equipment_maintenance_telemetry.sql",
-      "007_phase5_account_controls.sql",
+      "007_phase5_account_controls.sql", "008_phase5_equipment_alarms.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -177,7 +177,8 @@ describe("migrations", () => {
       "engineering_assets", "engineering_bom_lines",
       "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
       "engineering_change_implementation_evidence", "engineering_change_links", "engineering_change_orders",
-      "engineering_documents", "engineering_revisions",
+      "engineering_documents", "engineering_revisions", "equipment_alarm_events",
+      "equipment_alarm_rules", "equipment_alarms",
       "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
       "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
       "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",

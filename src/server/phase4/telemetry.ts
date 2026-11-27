@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import type { AuthenticatedUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
+import { evaluateAlarms } from "@/server/phase5/alarms";
 import { audit, requireAssetAccess, requireOperationsRole, requireUuid } from "./shared";
 
 export type Quality = "good" | "uncertain" | "bad";
@@ -223,6 +224,10 @@ async function ingest(
         "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
       [tag.id,sourceId,normalized.value,normalized.numericValue,normalized.quality,orderingState,reading.observedAt,reading.idempotencyKey,user.id],
     );
+    if (normalized.quality === "good" && orderingState === "ordered" &&
+        telemetryFreshness(reading.observedAt, now) === "fresh") {
+      await evaluateAlarms(client, assetId, tag.id, normalized.value, reading.observedAt, user);
+    }
     accepted += 1;
   }
   await client.query(

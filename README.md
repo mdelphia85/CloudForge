@@ -10,6 +10,8 @@ Phase 3 adds supplier-backed purchase orders and receiving, project/job material
 
 Phase 4 adds an equipment registry and hierarchy, preventive-maintenance plans and work orders, checklists, technician assignments, transactional parts issue/return, maintenance costs, equipment downtime, simulated read-only telemetry, and reliability reporting. Open `/operations/equipment` to register equipment, review maintenance and status, and generate simulated running, stopped, fault, stale, offline, delayed, or invalid samples. Telemetry is simulator-only; there is no connection to real PLCs, control command, or program transfer in this phase.
 
+Phase 5 work in progress adds equipment alarm rules to the existing simulator. Administrators and operators can configure thresholds or state matches, severity and consecutive-sample debounce, acknowledge alarms, and pause rules after active alarms clear. Only new, fresh, good-quality, ordered readings evaluate rules; duplicate, stale and bad readings do not. Alarm transitions and acknowledgements have immutable history. These application alarms are not a safety system, and acknowledging one never resets a PLC. Rules cannot currently be edited; create a replacement and pause the old rule after it clears.
+
 These are operational workflows, not a production-launch claim: there is no offline mutation/synchronization queue, live PLC/HMI transfer, automatic production scheduling, or multi-organization tenant isolation.
 
 This first slice is for one organization per deployment. Do not place multiple customer organizations in one shared database/deployment; tenant isolation and organization switching are not implemented yet.
