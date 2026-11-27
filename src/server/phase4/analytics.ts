@@ -127,8 +127,10 @@ export async function getReliabilityAnalytics(
       maintenance_title: string | null; production_job_code: string | null; production_status: string | null;
     }>(
       "SELECT d.asset_id,d.id::text AS id,d.reason,d.source,d.started_at,d.ended_at,d.production_downtime_id,d.maintenance_work_order_id, " +
-        "m.title AS maintenance_title,NULL::text AS production_job_code,NULL::text AS production_status " +
+        "m.title AS maintenance_title,j.job_code AS production_job_code,j.status AS production_status " +
         "FROM asset_downtime_events d LEFT JOIN maintenance_work_orders m ON m.id=d.maintenance_work_order_id " +
+        "LEFT JOIN production_downtime pd ON pd.id=d.production_downtime_id " +
+        "LEFT JOIN production_jobs j ON j.id=pd.production_job_id " +
         "WHERE d.asset_id=ANY($1::uuid[]) AND d.started_at < $3 AND (d.ended_at IS NULL OR d.ended_at > $2) " +
         "UNION ALL " +
         "SELECT j.asset_id,('production:'||d.id::text),d.reason,'production',d.started_at,d.ended_at,d.id,NULL::uuid,NULL::text, " +
