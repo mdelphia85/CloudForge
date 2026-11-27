@@ -61,6 +61,8 @@ Back up the queue consistently with SQLite's backup procedure, including its WAL
 
 Connection and observed timestamps are shown separately in the equipment workspace. A stale, delayed, invalid or disconnected sample is not live; replaying buffered samples does not make an old observation current. An invalid OPC UA value or timestamp marks the source faulted, without presenting the prior readings as live or fabricating a measurement; loss of gateway heartbeats eventually marks it disconnected. Gateway events and alarm transitions identify the gateway principal. Simulator and gateway alarms and debounce counters remain separate, so simulator readings cannot trigger or clear gateway alarms. No telemetry automatically creates production downtime.
 
+The reliability analytics API includes the latest retained raw reading per source and tag within the requested window, with timestamps, quality, and ordering metadata. These contextual readings do not change downtime-based reliability calculations; older rolled-up observations are not included in this latest-raw-reading list.
+
 ## CloudForge database recovery
 
 Take and test a PostgreSQL backup before applying migrations `010_phase5_industrial_gateways.sql` and `011_phase5_alarm_source_state.sql`. Migrations are additive and retain existing telemetry and alarm history. For a failed migration, stop writers, inspect the migration transaction and logs, restore a tested pre-migration backup or roll forward with a corrective migration. Do not drop telemetry, queue, alarm, audit, or inventory history as a shortcut. Restoring a database backup can lose accepted sequence records after the backup; coordinate gateway queues and database recovery so replay does not duplicate or silently omit accepted operational data.

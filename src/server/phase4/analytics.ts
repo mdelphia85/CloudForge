@@ -146,6 +146,23 @@ export async function getReliabilityAnalytics(
       currentEvents.push(event);
       byAsset.set(event.asset_id,currentEvents);
     }
+    const telemetry = await client.query<{
+      asset_id: string; provider: string; tag_name: string; value: string; quality: string;
+      ordering_state: string; observed_at: Date; received_at: Date;
+    }>(
+      "SELECT src.asset_id,src.provider,t.tag_name,s.value,s.quality,s.ordering_state,s.observed_at,s.received_at " +
+        "FROM asset_telemetry_sources src JOIN asset_telemetry_tags t ON t.asset_id=src.asset_id AND t.enabled " +
+        "JOIN LATERAL (SELECT value,quality,ordering_state,observed_at,received_at FROM asset_telemetry_samples " +
+        "WHERE source_id=src.id AND tag_id=t.id AND observed_at >= $2 AND observed_at < $3 " +
+        "ORDER BY observed_at DESC,received_at DESC LIMIT 1) s ON true WHERE src.asset_id=ANY($1::uuid[])",
+      [assetIds,windowStart,windowEnd],
+    );
+    const telemetryByAsset = new Map<string, typeof telemetry.rows>();
+    for (const reading of telemetry.rows) {
+      const currentReadings = telemetryByAsset.get(reading.asset_id) ?? [];
+      currentReadings.push(reading);
+      telemetryByAsset.set(reading.asset_id,currentReadings);
+    }
     const equipment = assets.rows.map((asset) => {
       const events = byAsset.get(asset.id) ?? [];
       const metrics = calculateReliabilityMetrics(
@@ -167,6 +184,15 @@ export async function getReliabilityAnalytics(
         name:asset.name,
         status:asset.status,
         metrics,
+        latestTelemetry:(telemetryByAsset.get(asset.id) ?? []).map((reading) => ({
+          provider:reading.provider,
+          tagName:reading.tag_name,
+          value:reading.value,
+          quality:reading.quality,
+          orderingState:reading.ordering_state,
+          observedAt:reading.observed_at,
+          receivedAt:reading.received_at,
+        })),
         failureHistory:events.map((event) => ({
           id:event.id,
           reason:event.reason,

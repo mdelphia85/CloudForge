@@ -9,6 +9,7 @@ import * as simulate from "@/app/api/operations/telemetry/simulate/route";
 import * as gateways from "@/app/api/gateways/route";
 import * as gateway from "@/app/api/gateways/[id]/route";
 import * as ingest from "@/app/api/gateways/ingest/route";
+import * as reliability from "@/app/api/operations/analytics/reliability/route";
 
 let actors: Actors;
 
@@ -99,6 +100,14 @@ it("enrolls a gateway, preserves source provenance and processes authenticated r
   expect(gatewayStatus.body.tags.find((tag: { id: string }) => tag.id === temp.id).value).toBe("60");
   expect(gatewayStatus.body.tags.find((tag: { id: string }) => tag.id === state.id).value).toBeNull();
   expect((await status("simulated")).body.tags.find((tag: { id: string }) => tag.id === temp.id).value).not.toBe("60");
+  const analytics = await call(reliability.GET, {
+    cookie: actors.admin.cookie, path: `/api/test?assetId=${assetId}&days=1`,
+  });
+  expect(analytics.status).toBe(200);
+  expect(analytics.body.equipment[0].latestTelemetry).toContainEqual(expect.objectContaining({
+    provider: "gateway", tagName: "temperature_c", value: "60", quality: "good",
+  }));
+  expect(analytics.body.equipment[0].metrics.failureCount).toBe(0);
   const alarmList = await call((request) => alarms.GET(request, context), { cookie: actors.admin.cookie });
   expect(alarmList.body.alarms).toHaveLength(1);
   expect(alarmList.body.alarms[0]).toMatchObject({ provider: "gateway", clearedAt: null });
