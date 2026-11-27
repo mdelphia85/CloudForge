@@ -28,8 +28,14 @@ export async function getProjectPlanning(projectId: string, user: AuthenticatedU
       [projectId],
     ),
     getPool().query(
-      "SELECT *, (quantity*estimated_unit_cost)::text AS estimated_total, (quantity*actual_unit_cost)::text AS actual_total " +
-        "FROM project_cost_entries WHERE project_id=$1 ORDER BY created_at DESC LIMIT 300",
+      "SELECT id,cost_type,description,source,unit,quantity::text,estimated_unit_cost::text,actual_unit_cost::text,source_reference,created_by,created_at, " +
+        "(quantity*estimated_unit_cost)::text AS estimated_total,(quantity*actual_unit_cost)::text AS actual_total " +
+        "FROM project_cost_entries WHERE project_id=$1 " +
+        "UNION ALL SELECT c.id,c.cost_type,c.description,'maintenance work order' AS source,'ea' AS unit,1::text AS quantity, " +
+        "NULL::text AS estimated_unit_cost,c.amount::text AS actual_unit_cost,m.id::text AS source_reference,c.actor_id AS created_by,c.created_at, " +
+        "NULL::text AS estimated_total,c.amount::text AS actual_total " +
+        "FROM maintenance_work_order_cost_events c JOIN maintenance_work_orders m ON m.id=c.work_order_id " +
+        "WHERE c.project_id=$1 ORDER BY created_at DESC LIMIT 300",
       [projectId],
     ),
     getPool().query(

@@ -8,6 +8,8 @@ The operations workspace supports project tasks, equipment and BOM records, purc
 
 Phase 3 adds supplier-backed purchase orders and receiving, project/job material reservations and shortage visibility, revisioned BOMs that keep imported Phase 2 demand provisional until explicitly approved, and evidence-backed engineering change implementation. Production work-center/shift/operator assignments, chronology-validated downtime, overlap-aware project resource allocations, milestones/dependencies/costs, and field-service parts and work logs share PostgreSQL records and update inventory transactionally. Field-service histories and installations are restricted to assigned technicians and authorized staff; approved PLC/HMI downloads remain limited to programs associated with the equipment or project. Open `/operations/phase3` for the Phase 3 workspace; the existing inventory and Phase 2 workspaces remain available.
 
+Phase 4 adds an equipment registry and hierarchy, preventive-maintenance plans and work orders, checklists, technician assignments, transactional parts issue/return, maintenance costs, equipment downtime, simulated read-only telemetry, and reliability reporting. Open `/operations/equipment` to register equipment, review maintenance and status, and generate simulated running, stopped, fault, stale, offline, delayed, or invalid samples. Telemetry is simulator-only; there is no connection to real PLCs, control command, or program transfer in this phase.
+
 These are operational workflows, not a production-launch claim: there is no offline mutation/synchronization queue, live PLC/HMI transfer, automatic production scheduling, or multi-organization tenant isolation.
 
 This first slice is for one organization per deployment. Do not place multiple customer organizations in one shared database/deployment; tenant isolation and organization switching are not implemented yet.
@@ -67,6 +69,14 @@ TEST_DATABASE_URL=postgresql://cloudforge_test:<password>@localhost:5432/cloudfo
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, the integration tests against a throwaway `postgres:18` service container, the production build, and a production dependency audit.
+
+### Phase 4 equipment and simulated telemetry
+
+Apply migration `006_phase4_equipment_maintenance_telemetry.sql` with `npm run db:migrate` after taking a database backup. The migration extends existing equipment records and adds maintenance, downtime, telemetry, and rollup tables; it does not connect to external systems. New equipment receives a simulated telemetry source and standard tags automatically. Existing equipment receives the same disconnected simulated source and tags when the migration runs.
+
+Telemetry is generated from the equipment workspace or the authenticated `POST /api/operations/telemetry/simulate` endpoint. Supported modes are `normal`, `stopped`, `fault`, `stale`, `offline`, `out_of_order`, and `invalid`. Samples are validated and append-only; ingestion rejects observations older than 30 days and aggregates up to 5,000 retained raw samples older than 30 days into hourly rollups before removal. Reliability reporting defaults to 30 days and accepts a 1–365 day window. Availability uses the clipped union of downtime intervals; MTBF divides available time by failures that started in the reporting window; MTTR averages completed failure durations that ended in the window. Empty denominators are reported as unavailable rather than fabricated values.
+
+There is no destructive down migration because these tables contain operational history and inventory-linked records. To roll back an application release, stop writes and restore the pre-migration database backup (or roll forward with a corrective migration); do not manually drop Phase 4 tables from a database containing records that must be retained. Cloud, on-prem, local, and air-gapped deployments use the same local simulator and require no telemetry SaaS or internet connection.
 
 ## Container build
 

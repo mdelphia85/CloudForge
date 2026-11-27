@@ -240,6 +240,7 @@ export default function OperationsWorkspace(){
         <div><strong className="block tracking-tight text-lg">CloudForge</strong><span className="text-[11px] text-slate-400">Industrial Operations</span></div></div>
       <Link href="/" className="flex items-center gap-2 p-3 text-sm rounded-md hover:bg-slate-700"><Package size={17}/> Inventory (Phase 1)</Link>
       <Link href="/operations/phase3" className="flex items-center gap-2 p-3 text-sm rounded-md hover:bg-slate-700"><Factory size={17}/> Phase 3 workflows</Link>
+      <Link href="/operations/equipment" className="flex items-center gap-2 p-3 text-sm rounded-md hover:bg-slate-700"><Wrench size={17}/> Phase 4 equipment</Link>
       <div className="text-[10px] tracking-widest uppercase text-slate-500 font-bold mt-3 mb-1">Integrated operations</div>
       <nav className="flex flex-row lg:flex-col flex-wrap gap-1" aria-label="Operations modules">
         {ORDER.map(k=><button key={k} onClick={()=>{setActive(k);setShowForm(false);setError("");setNotice("");}}
