@@ -14,6 +14,25 @@ type Rule = {
   consecutive_matches: number;
   data_type: string;
 };
+export type AlarmActor = { user: AuthenticatedUser; gatewayId?: never } | { user?: never; gatewayId: string };
+
+async function recordAutomaticAlarm(
+  client: PoolClient, actor: AlarmActor, alarmId: string, action: "triggered" | "cleared",
+  value: string, ruleId: string, assetId: string,
+) {
+  await client.query(
+    "INSERT INTO equipment_alarm_events(alarm_id,action,actor_id,gateway_actor_id,value) VALUES($1,$2,$3,$4,$5)",
+    [alarmId, action, actor.user?.id ?? null, actor.gatewayId ?? null, value],
+  );
+  if (actor.user) {
+    await audit(client, actor.user, `equipment_alarm.${action}`, "equipment_alarm", alarmId, { ruleId, assetId, value });
+  } else {
+    await client.query(
+      "INSERT INTO audit_events(gateway_actor_id,action,entity_type,entity_id,details) VALUES($1,$2,'equipment_alarm',$3,$4)",
+      [actor.gatewayId, `equipment_alarm.${action}`, alarmId, JSON.stringify({ ruleId, assetId, value })],
+    );
+  }
+}
 
 function matches(rule: Rule, value: string): boolean {
   if (rule.data_type === "number") {
@@ -29,10 +48,11 @@ function matches(rule: Rule, value: string): boolean {
 export async function evaluateAlarms(
   client: PoolClient,
   assetId: string,
+  sourceId: string,
   tagId: string,
   value: string,
   observedAt: Date,
-  user: AuthenticatedUser,
+  actor: AlarmActor,
 ): Promise<void> {
   const rules = await client.query<Rule>(
     `SELECT r.id,r.condition,r.threshold,r.severity,r.debounce_samples,r.consecutive_matches,t.data_type
@@ -42,8 +62,8 @@ export async function evaluateAlarms(
   );
   for (const rule of rules.rows) {
     const active = await client.query<{ id: string }>(
-      "SELECT id FROM equipment_alarms WHERE rule_id=$1 AND cleared_at IS NULL FOR UPDATE",
-      [rule.id],
+      "SELECT id FROM equipment_alarms WHERE rule_id=$1 AND source_id=$2 AND cleared_at IS NULL FOR UPDATE",
+      [rule.id, sourceId],
     );
     if (matches(rule, value)) {
       if (active.rowCount) continue;
@@ -51,24 +71,16 @@ export async function evaluateAlarms(
       await client.query("UPDATE equipment_alarm_rules SET consecutive_matches=$2 WHERE id=$1", [rule.id, count]);
       if (count < rule.debounce_samples) continue;
       const alarm = await client.query<{ id: string }>(
-        `INSERT INTO equipment_alarms(rule_id,asset_id,severity,triggered_at,trigger_value)
-         VALUES($1,$2,$3,$4,$5) RETURNING id`,
-        [rule.id, assetId, rule.severity, observedAt, value],
+        `INSERT INTO equipment_alarms(rule_id,asset_id,source_id,severity,triggered_at,trigger_value)
+         VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [rule.id, assetId, sourceId, rule.severity, observedAt, value],
       );
-      await client.query(
-        "INSERT INTO equipment_alarm_events(alarm_id,action,actor_id,value) VALUES($1,'triggered',$2,$3)",
-        [alarm.rows[0].id, user.id, value],
-      );
-      await audit(client, user, "equipment_alarm.triggered", "equipment_alarm", alarm.rows[0].id, { ruleId: rule.id, assetId, value });
+      await recordAutomaticAlarm(client, actor, alarm.rows[0].id, "triggered", value, rule.id, assetId);
     } else {
       await client.query("UPDATE equipment_alarm_rules SET consecutive_matches=0 WHERE id=$1", [rule.id]);
       if (!active.rowCount) continue;
       await client.query("UPDATE equipment_alarms SET cleared_at=$2,clear_value=$3 WHERE id=$1", [active.rows[0].id, observedAt, value]);
-      await client.query(
-        "INSERT INTO equipment_alarm_events(alarm_id,action,actor_id,value) VALUES($1,'cleared',$2,$3)",
-        [active.rows[0].id, user.id, value],
-      );
-      await audit(client, user, "equipment_alarm.cleared", "equipment_alarm", active.rows[0].id, { ruleId: rule.id, assetId, value });
+      await recordAutomaticAlarm(client, actor, active.rows[0].id, "cleared", value, rule.id, assetId);
     }
   }
 }
@@ -87,11 +99,13 @@ export async function listAlarms(assetId: string, user: AuthenticatedUser) {
       client.query(
         `SELECT a.id,a.severity,a.triggered_at AS "triggeredAt",a.trigger_value AS "triggerValue",
                 a.acknowledged_at AS "acknowledgedAt",u.display_name AS "acknowledgedBy",
-                a.cleared_at AS "clearedAt",a.clear_value AS "clearValue",r.name,
+                a.cleared_at AS "clearedAt",a.clear_value AS "clearValue",r.name,src.provider,
                 COALESCE((SELECT jsonb_agg(jsonb_build_object('action',e.action,'value',e.value,
-                  'at',e.occurred_at,'actor',actor.display_name) ORDER BY e.occurred_at,e.id)
-                  FROM equipment_alarm_events e JOIN users actor ON actor.id=e.actor_id WHERE e.alarm_id=a.id),'[]'::jsonb) AS events
+                  'at',e.occurred_at,'actor',COALESCE(actor.display_name,'Gateway: '||g.name)) ORDER BY e.occurred_at,e.id)
+                  FROM equipment_alarm_events e LEFT JOIN users actor ON actor.id=e.actor_id
+                  LEFT JOIN industrial_gateways g ON g.id=e.gateway_actor_id WHERE e.alarm_id=a.id),'[]'::jsonb) AS events
            FROM equipment_alarms a JOIN equipment_alarm_rules r ON r.id=a.rule_id
+           JOIN asset_telemetry_sources src ON src.id=a.source_id
            LEFT JOIN users u ON u.id=a.acknowledged_by
           WHERE a.asset_id=$1 ORDER BY (a.cleared_at IS NULL) DESC,a.triggered_at DESC LIMIT 200`,
         [assetId],

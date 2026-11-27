@@ -534,7 +534,10 @@ async function readCounter(
       "JOIN asset_telemetry_sources src ON src.id=s.source_id " +
       "WHERE t.asset_id=$1 AND t.semantic_type=$2 AND t.enabled AND s.quality='good' " +
       "AND s.ordering_state='ordered' AND s.observed_at >= now()-interval '5 minutes' " +
-      "AND src.enabled AND src.connection_state='connected' " +
+      "AND src.enabled AND src.connection_state='connected' AND src.last_seen_at >= now()-interval '3 minutes' " +
+      "AND (src.provider='simulated' OR EXISTS(SELECT 1 FROM industrial_gateways g WHERE g.id=src.gateway_id " +
+      "AND g.enabled AND g.revoked_at IS NULL AND g.expires_at>now())) " +
+      "AND src.id=(SELECT id FROM asset_telemetry_sources WHERE asset_id=$1 ORDER BY (provider='gateway') DESC LIMIT 1) " +
       "ORDER BY s.observed_at DESC,s.received_at DESC LIMIT 1",
     [assetId,semanticType === "runtime" ? "runtime_counter" : "cycle_counter"],
   );

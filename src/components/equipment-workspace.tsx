@@ -14,7 +14,8 @@ type TelemetryTag = Row & {
 };
 type TelemetryStatus = {
   assetId: string; connection: string; lastSeenAt: string | null; tags: TelemetryTag[];
-  events: Row[]; staleAfterSeconds: number; disconnectedAfterSeconds: number;
+  events: Row[]; staleAfterSeconds: number; disconnectedAfterSeconds: number; lastError: string;
+  provider: "gateway" | "simulated"; availableSources: Array<"gateway" | "simulated">;
 };
 type WorkOrder = Row & {
   id: string; assetId: string; title: string; status: string; workType: string;
@@ -22,13 +23,13 @@ type WorkOrder = Row & {
 };
 type Options = { equipment: Row[]; users: Row[]; items: Row[]; projects: Row[] };
 type Point = { timestamp: string; value: string; numericValue?: string | null; quality: string; orderingState?: string };
-type History = { tag: { label: string; unit: string }; points: Point[] };
+type History = { assetId: string; provider: string; tag: { id: string; label: string; unit: string }; points: Point[] };
 type Metrics = { mtbfSeconds: number | null; mttrSeconds: number | null; availabilityPercent: number; downtimeSeconds: number; failureCount: number };
 type Analytics = { days: number; from: string; to: string; equipment: Array<{ assetId: string; assetTag: string; name: string; metrics: Metrics; failureHistory: Row[] }> };
 type AlarmData = { assetId: string; rules: Row[]; alarms: Row[] };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store" });
+  const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store", signal: init?.signal ?? AbortSignal.timeout(10_000) });
   const result = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(result.error ?? "The request could not be completed.");
   return result;
@@ -110,6 +111,9 @@ export default function EquipmentWorkspace() {
   const [workOrderDetail, setWorkOrderDetail] = useState<Row | null>(null);
   const [windowDays, setWindowDays] = useState(30);
   const [simulationMode, setSimulationMode] = useState("normal");
+  const [sourceChoice, setSourceChoice] = useState("");
+  const [gateways, setGateways] = useState<Row[]>([]);
+  const [clock, setClock] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -118,7 +122,7 @@ export default function EquipmentWorkspace() {
   const canManage = user?.role === "admin" || user?.role === "operator";
   const selectedAsset = equipment.find((item) => item.id === selectedAssetId) ?? null;
   const selectedWorkOrder = workOrders.find((item) => item.id === selectedWorkOrderId) ?? null;
-  const selectedTelemetry = telemetry?.assetId === selectedAssetId ? telemetry : null;
+  const selectedTelemetry = telemetry?.assetId === selectedAssetId && (!sourceChoice || telemetry.provider === sourceChoice) ? telemetry : null;
   const selectedAlarms = alarmData?.assetId === selectedAssetId ? alarmData : null;
   const selectedDowntime = downtimeAssetId === selectedAssetId ? downtime : [];
   const selectedEquipmentDetail = detailAssetId === selectedAssetId ? equipmentDetail : null;
@@ -133,6 +137,9 @@ export default function EquipmentWorkspace() {
     setEquipment(equipmentData.equipment);
     setWorkOrders(workOrderData.workOrders);
     setAnalytics(analyticsData);
+    if (user.role === "admin") {
+      setGateways((await api<{ gateways: Row[] }>("/api/gateways")).gateways);
+    }
     if (canManage) {
       const [planData, optionData] = await Promise.all([
         api<{ plans: Row[] }>("/api/operations/maintenance/plans"),
@@ -161,7 +168,7 @@ export default function EquipmentWorkspace() {
   const loadTelemetry = useCallback(async () => {
     if (!selectedAssetId) return;
     const [status, downtimeData, alarms] = await Promise.all([
-      api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry`),
+      api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry${sourceChoice ? `?provider=${sourceChoice}` : ""}`),
       api<{ downtime: Row[] }>(`/api/operations/equipment/${selectedAssetId}/downtime`),
       api<{ rules: Row[]; alarms: Row[] }>(`/api/operations/equipment/${selectedAssetId}/alarms`),
     ]);
@@ -172,13 +179,13 @@ export default function EquipmentWorkspace() {
     setSelectedTagId((current) => current && status.tags.some((tag) => tag.id === current)
       ? current
       : String(status.tags.find((tag) => tag.semanticType === "metric" && tag.dataType === "number")?.id ?? ""));
-  }, [selectedAssetId]);
+  }, [selectedAssetId, sourceChoice]);
 
   useEffect(() => {
     let active = true;
     if (!selectedAssetId) return;
     void Promise.all([
-      api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry`),
+      api<TelemetryStatus>(`/api/operations/equipment/${selectedAssetId}/telemetry${sourceChoice ? `?provider=${sourceChoice}` : ""}`),
       api<{ downtime: Row[] }>(`/api/operations/equipment/${selectedAssetId}/downtime`),
       api<{ rules: Row[]; alarms: Row[] }>(`/api/operations/equipment/${selectedAssetId}/alarms`),
     ]).then(([status, downtimeData, alarms]) => {
@@ -194,17 +201,40 @@ export default function EquipmentWorkspace() {
       if (active) setError(reason instanceof Error ? reason.message : "Unable to load equipment telemetry.");
     });
     return () => { active = false; };
-  }, [selectedAssetId]);
+  }, [selectedAssetId, sourceChoice]);
+
+  useEffect(() => {
+    if (!selectedAssetId) return;
+    const timer = setInterval(() => {
+      void loadTelemetry().catch((reason: unknown) => {
+        setTelemetry(null);
+        setError(reason instanceof Error ? reason.message : "Unable to refresh telemetry.");
+      });
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [loadTelemetry, selectedAssetId]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
     if (selectedAssetId && selectedTagId) {
-      void api<History>(`/api/operations/equipment/${selectedAssetId}/telemetry/history?tagId=${encodeURIComponent(selectedTagId)}&days=1`)
-        .then((result) => { if (active) setHistory(result); })
-        .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load telemetry trend."); });
+      const provider = selectedTelemetry?.provider;
+      if (!provider) return;
+      const load = () => {
+        void api<Omit<History, "assetId" | "provider">>(`/api/operations/equipment/${selectedAssetId}/telemetry/history?tagId=${encodeURIComponent(selectedTagId)}&days=1&provider=${provider}`)
+          .then((result) => { if (active) setHistory({ ...result, assetId: selectedAssetId, provider }); })
+          .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load telemetry trend."); });
+      };
+      load();
+      const timer = setInterval(load, 15_000);
+      return () => { active = false; clearInterval(timer); };
     }
     return () => { active = false; };
-  }, [selectedAssetId, selectedTagId]);
+  }, [selectedAssetId, selectedTagId, selectedTelemetry?.provider]);
 
   useEffect(() => {
     let active = true;
@@ -270,7 +300,9 @@ export default function EquipmentWorkspace() {
   const metricOptions = selectedTelemetry?.tags
     .filter((tag) => tag.dataType === "number" && tag.semanticType === "metric")
     .map((tag) => ({ value: tag.id, label: `${tag.label}${tag.unit ? ` (${tag.unit})` : ""}` })) ?? [];
-  const chartPoints = (history?.points ?? [])
+  const selectedHistory = history?.assetId === selectedAssetId && history.tag.id === selectedTagId &&
+    history.provider === selectedTelemetry?.provider ? history : null;
+  const chartPoints = (selectedHistory?.points ?? [])
     .filter((point) => point.numericValue !== null && point.numericValue !== undefined)
     .map((point) => ({ x: new Date(point.timestamp).getTime(), y: Number(point.numericValue) }))
     .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -286,8 +318,14 @@ export default function EquipmentWorkspace() {
     }).join(" ");
   }, [chartPoints]);
   const statusTag = selectedTelemetry?.tags.find((tag) => tag.semanticType === "state");
-  const freshness = statusTag?.freshness ?? "missing";
-  const stateLive = selectedTelemetry?.connection === "connected" && freshness === "fresh" &&
+  const freshnessOf = (tag: TelemetryTag | undefined) => {
+    if (!tag?.observedAt || !Number.isFinite(Date.parse(tag.observedAt))) return "missing";
+    return clock - Date.parse(tag.observedAt) <= (selectedTelemetry?.staleAfterSeconds ?? 0) * 1000 ? "fresh" : "stale";
+  };
+  const sourceConnected = selectedTelemetry?.connection === "connected" && !!selectedTelemetry.lastSeenAt &&
+    clock - Date.parse(selectedTelemetry.lastSeenAt) <= selectedTelemetry.disconnectedAfterSeconds * 1000;
+  const freshness = freshnessOf(statusTag);
+  const stateLive = sourceConnected && freshness === "fresh" &&
     statusTag?.quality === "good" && statusTag.orderingState === "ordered";
   const machineState = stateLive ? statusTag?.value ?? "unknown" : "Unavailable";
   const ordersForAsset = workOrders.filter((order) => order.assetId === selectedAssetId);
@@ -312,9 +350,9 @@ export default function EquipmentWorkspace() {
     <header className="bg-[#16272b] px-5 py-5 text-white lg:px-10">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-teal-200">CloudForge · Phase 4</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-teal-200">CloudForge · Equipment operations</p>
           <h1 className="mt-1 text-2xl font-bold">Equipment, maintenance & monitoring</h1>
-          <p className="mt-1 text-xs text-slate-300">Simulated read-only telemetry · no live PLC connections</p>
+          <p className="mt-1 text-xs text-slate-300">Read-only equipment monitoring · simulator and customer gateway sources</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/operations" className="rounded-md border border-slate-500 px-3 py-2 text-xs font-semibold hover:bg-slate-700">Integrated operations</Link>
@@ -333,7 +371,7 @@ export default function EquipmentWorkspace() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <label className="min-w-[220px] flex-1 text-xs font-semibold">
               Selected equipment
-              <select value={selectedAssetId} onChange={(event) => setSelectedAssetId(event.target.value)}
+              <select value={selectedAssetId} onChange={(event) => { setSourceChoice(""); setSelectedAssetId(event.target.value); }}
                 className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-sm">
                 {!equipment.length && <option value="">No equipment available</option>}
                 {equipment.map((asset) => <option key={asset.id} value={asset.id}>{asset.assetTag} · {asset.name}</option>)}
@@ -459,11 +497,20 @@ export default function EquipmentWorkspace() {
         <Panel title="Machine monitoring">
           {!selectedAsset && <p className="text-sm text-slate-500">Register or select equipment to view telemetry.</p>}
           {selectedAsset && <>
+            <label className="mb-3 block text-xs font-semibold">Telemetry source
+              <select value={selectedTelemetry?.provider ?? ""} onChange={(event) => setSourceChoice(event.target.value)}
+                className="ml-2 h-9 rounded-md border bg-white px-2">
+                {!selectedTelemetry && <option value="">Loading</option>}
+                {(selectedTelemetry?.availableSources ?? []).map((provider) =>
+                  <option key={provider} value={provider}>{provider === "gateway" ? "Customer gateway" : "Simulator"}</option>)}
+              </select>
+            </label>
             <div className="grid grid-cols-2 gap-3">
-              <div className={`rounded-lg p-4 ${selectedTelemetry?.connection === "connected" ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}>
+              <div className={`rounded-lg p-4 ${sourceConnected ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}>
                 <span className="text-[10px] font-bold uppercase tracking-wider">Connection</span>
-                <strong className="mt-1 block text-lg capitalize">{selectedTelemetry?.connection ?? "unknown"}</strong>
+                <strong className="mt-1 block text-lg capitalize">{selectedTelemetry ? (sourceConnected ? "connected" : "disconnected") : "unknown"}</strong>
                 <span className="text-[11px]">Last source heartbeat: {format(selectedTelemetry?.lastSeenAt)}</span>
+                {selectedTelemetry?.lastError && <p className="text-[11px]">{selectedTelemetry.lastError}</p>}
               </div>
               <div className={`rounded-lg p-4 ${stateLive ? "bg-teal-50 text-teal-900" : "bg-amber-50 text-amber-900"}`}>
                 <span className="text-[10px] font-bold uppercase tracking-wider">Machine state</span>
@@ -486,10 +533,10 @@ export default function EquipmentWorkspace() {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               {selectedTelemetry?.tags.map((tag) => <div key={tag.id} className="rounded-lg border border-slate-100 p-3 text-xs">
                 <div className="flex justify-between gap-2"><strong>{tag.label}</strong><span className={`rounded px-2 py-0.5 ${tag.quality === "good" ? "bg-emerald-50 text-emerald-800" : tag.quality === "bad" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-800"}`}>
-                  {tag.quality ?? "no sample"}
+                  {tag.quality === "bad" ? "invalid / bad" : tag.quality ?? "no sample"}
                 </span></div>
                 <p className="mt-1 text-lg font-bold">{format(tag.value)}{tag.unit ? ` ${tag.unit}` : ""}</p>
-                <p className="text-[10px] text-slate-500">{selectedTelemetry.connection === "connected" && tag.freshness === "fresh" && tag.quality === "good" && tag.orderingState === "ordered" ? "Current" : "Cached / not live"} · {tag.freshness ?? "missing"} · {tag.orderingState ?? "no sample"} · observed {format(tag.observedAt)}</p>
+                <p className="text-[10px] text-slate-500">{sourceConnected && freshnessOf(tag) === "fresh" && tag.quality === "good" && tag.orderingState === "ordered" ? "Current" : "Cached / not live"} · {freshnessOf(tag)} · {tag.orderingState === "out_of_order" ? "delayed / out of order" : tag.orderingState ?? "no sample"} · observed {format(tag.observedAt)}</p>
               </div>)}
             </div>
             <div className="mt-5">
@@ -498,20 +545,20 @@ export default function EquipmentWorkspace() {
                 {!metricOptions.length && <option value="">No numeric metrics</option>}
                 {metricOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select></label>
-              {history && <>
+              {selectedHistory && <>
                 <figure className="mt-3 rounded-lg bg-slate-50 p-3">
-                  <figcaption className="text-xs font-semibold">{history.tag.label} trend · last 24 hours</figcaption>
-                  {chartCoordinates ? <svg viewBox="0 0 300 125" role="img" aria-label={`${history.tag.label} numeric trend`} className="mt-2 h-36 w-full">
+                  <figcaption className="text-xs font-semibold">{selectedHistory.tag.label} trend · last 24 hours</figcaption>
+                  {chartCoordinates ? <svg viewBox="0 0 300 125" role="img" aria-label={`${selectedHistory.tag.label} numeric trend`} className="mt-2 h-36 w-full">
                     <line x1="10" y1="110" x2="290" y2="110" stroke="#94a3b8" strokeWidth="1"/>
                     <polyline points={chartCoordinates} fill="none" stroke="#0f766e" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
                   </svg> : <p className="py-8 text-center text-xs text-slate-500">At least two valid numeric samples are required to draw a trend.</p>}
-                  <p className="text-[10px] text-slate-500">{history.points.length} samples · bad-quality and non-numeric values are excluded from the chart.</p>
+                  <p className="text-[10px] text-slate-500">{selectedHistory.points.length} samples · bad-quality and non-numeric values are excluded from the chart.</p>
                 </figure>
                 <div className="mt-2 max-h-40 overflow-auto">
                   <table className="w-full text-left text-[10px]">
                     <caption className="sr-only">Recent telemetry samples</caption>
                     <thead><tr><th className="p-1">Observed</th><th className="p-1">Value</th><th className="p-1">Quality / order</th></tr></thead>
-                    <tbody>{history.points.slice(-8).reverse().map((point, index) => <tr key={`${point.timestamp}-${index}`} className="border-t">
+                    <tbody>{selectedHistory.points.slice(-8).reverse().map((point, index) => <tr key={`${point.timestamp}-${index}`} className="border-t">
                       <td className="p-1">{format(point.timestamp)}</td><td className="p-1">{format(point.value)}</td>
                       <td className="p-1">{point.quality} {point.orderingState === "out_of_order" ? "· delayed/out of order" : ""}</td>
                     </tr>)}</tbody>
@@ -524,7 +571,7 @@ export default function EquipmentWorkspace() {
               <p className="mb-2 text-xs text-slate-600">CloudForge acknowledgement does not reset a PLC or safety system. Alarms clear only when a fresh, good reading no longer matches.</p>
               <ol className="space-y-2 text-xs">
                 {(selectedAlarms?.alarms ?? []).map((entry) => <li key={String(entry.id)} className="rounded border p-2">
-                  <strong>{String(entry.name)} · {String(entry.severity)} · {entry.clearedAt ? "cleared" : "active"}</strong>
+                  <strong>{String(entry.name)} · {String(entry.severity)} · {String(entry.provider)} · {entry.clearedAt ? "cleared" : "active"}</strong>
                   <p>Triggered {format(entry.triggeredAt)} · value {format(entry.triggerValue)} · {entry.acknowledgedAt ? `acknowledged by ${format(entry.acknowledgedBy)} at ${format(entry.acknowledgedAt)}` : "not acknowledged"}</p>
                   {canManage && !entry.acknowledgedAt && <Button tone="secondary" disabled={busy} onClick={() => void run(
                     () => api(`/api/operations/equipment/${selectedAsset.id}/alarms/${String(entry.id)}`, { method: "POST" }),
@@ -576,6 +623,58 @@ export default function EquipmentWorkspace() {
           </>}
         </Panel>
       </div>
+
+      {user.role === "admin" && selectedAsset && <Panel title="Customer gateway administration">
+        <p className="mb-3 text-xs text-slate-600">Register an Ed25519 public key and explicitly allowed tags. Never paste a private key or password here. One gateway source per equipment is supported.</p>
+        <form className="grid gap-3 md:grid-cols-2" onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          void run(() => api("/api/gateways", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              name: data.get("name"), publicKey: data.get("publicKey"),
+              expiresAt: data.get("expiresAt") ? new Date(String(data.get("expiresAt"))).toISOString() : "",
+              tagIds: data.getAll("tagIds"),
+            }),
+          }), "Gateway registered. Copy its ID into the gateway configuration.");
+        }}>
+          <Field label="Gateway name" name="name" required/>
+          <Field label="Credential expiry (local time)" name="expiresAt" type="datetime-local" required/>
+          <label className="block text-xs font-semibold md:col-span-2">Ed25519 public key (PEM)
+            <textarea name="publicKey" required rows={4} className="mt-1 block w-full rounded-md border p-2 font-mono text-xs"/>
+          </label>
+          <fieldset className="text-xs md:col-span-2"><legend className="font-semibold">Allowed tags for {selectedAsset.assetTag}</legend>
+            <div className="mt-2 flex flex-wrap gap-3">{(selectedTelemetry?.tags ?? []).map((tag) =>
+              <label key={tag.id}><input type="checkbox" name="tagIds" value={tag.id}/> {tag.label} ({tag.tagName})</label>)}</div>
+          </fieldset>
+          <div><Button type="submit" disabled={busy}>Register gateway</Button></div>
+        </form>
+        <ul className="mt-4 space-y-3 text-xs">{gateways.map((gateway) => <li key={String(gateway.id)} className="rounded border p-3">
+          <strong>{String(gateway.name)}</strong> · ID {String(gateway.id)} · {gateway.revokedAt ? "revoked" : gateway.enabled ? "enabled" : "disabled"} · expires {format(gateway.expiresAt)} · {String(gateway.tagCount)} tags
+          {!gateway.revokedAt && <div className="mt-2 flex flex-wrap gap-2">
+            <Button tone="secondary" disabled={busy} onClick={() => void run(
+              () => api(`/api/gateways/${String(gateway.id)}`, { method: "PATCH", headers: { "content-type": "application/json" },
+                body: JSON.stringify({ action: gateway.enabled ? "disable" : "enable" }) }), "Gateway status updated.",
+            )}>{gateway.enabled ? "Disable" : "Enable"}</Button>
+            <Button tone="secondary" disabled={busy} onClick={() => {
+              if (!window.confirm("Revoke this gateway permanently?")) return;
+              void run(() => api(`/api/gateways/${String(gateway.id)}`, { method: "PATCH", headers: { "content-type": "application/json" },
+                body: JSON.stringify({ action: "revoke" }) }), "Gateway revoked.");
+            }}>Revoke</Button>
+            <details><summary className="cursor-pointer rounded border px-3 py-2">Rotate public key</summary>
+              <form className="mt-2 grid gap-2" onSubmit={submit(async (values) => {
+                await api(`/api/gateways/${String(gateway.id)}`, { method: "PATCH", headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ action: "rotate", publicKey: values.publicKey,
+                    expiresAt: new Date(String(values.expiresAt)).toISOString() }) });
+              }, "Gateway credential rotated.")}>
+                <Field label="New expiry (local time)" name="expiresAt" type="datetime-local" required/>
+                <label>New Ed25519 public key<textarea name="publicKey" required rows={4} className="block w-full rounded border p-2 font-mono"/></label>
+                <div><Button type="submit" disabled={busy}>Rotate key</Button></div>
+              </form>
+            </details>
+          </div>}
+        </li>)}</ul>
+      </Panel>}
 
       {canManage && <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="Preventive maintenance plans">
@@ -864,7 +963,7 @@ export default function EquipmentWorkspace() {
       </div>
 
       <p className="rounded-lg border border-slate-200 bg-white p-4 text-xs text-slate-600">
-        Telemetry is generated only by the local simulator and stored with quality, ordering, observation, and receipt metadata. Stale, bad-quality, delayed, or disconnected samples are not represented as current live equipment status.
+        Telemetry retains its simulator or gateway source, quality, ordering, observation, and receipt metadata. Stale, bad-quality, delayed, or disconnected samples are not represented as current live equipment status.
       </p>
     </div>
   </main>;

@@ -127,9 +127,12 @@ export async function listEquipment(user: AuthenticatedUser) {
       "(SELECT count(*)::int FROM production_jobs j WHERE j.asset_id=a.id) AS \"productionJobCount\" " +
       "FROM engineering_assets a LEFT JOIN projects p ON p.id=a.project_id " +
       "LEFT JOIN engineering_assets parent ON parent.id=a.parent_asset_id " +
-      "LEFT JOIN asset_telemetry_sources src ON src.asset_id=a.id " +
+      "LEFT JOIN LATERAL (SELECT s.id,s.last_seen_at,CASE WHEN s.provider='gateway' AND " +
+        "(NOT g.enabled OR g.revoked_at IS NOT NULL OR g.expires_at<=now()) THEN 'disconnected' ELSE s.connection_state END AS connection_state " +
+        "FROM asset_telemetry_sources s LEFT JOIN industrial_gateways g ON g.id=s.gateway_id " +
+        "WHERE s.asset_id=a.id ORDER BY (s.provider='gateway') DESC LIMIT 1) src ON true " +
       "LEFT JOIN LATERAL (SELECT s.value,s.quality,s.observed_at FROM asset_telemetry_samples s " +
-        "JOIN asset_telemetry_tags t ON t.id=s.tag_id WHERE t.asset_id=a.id AND t.semantic_type='state' " +
+        "JOIN asset_telemetry_tags t ON t.id=s.tag_id WHERE t.asset_id=a.id AND s.source_id=src.id AND t.semantic_type='state' " +
         "ORDER BY s.received_at DESC,s.observed_at DESC LIMIT 1) state ON true " +
       "WHERE $1 <> 'viewer' OR EXISTS(SELECT 1 FROM projects pr WHERE pr.id=a.project_id AND pr.created_by=$2) " +
       "OR EXISTS(SELECT 1 FROM project_resources r WHERE r.project_id=a.project_id AND r.user_id=$2) " +
@@ -190,7 +193,8 @@ export async function getEquipment(assetId: string, user: AuthenticatedUser) {
         "SELECT t.id,t.tag_name AS \"tagName\",t.label,t.data_type AS \"dataType\",t.semantic_type AS \"semanticType\",t.unit, " +
           "latest.value,latest.numeric_value AS \"numericValue\",latest.quality,latest.observed_at AS \"observedAt\",latest.received_at AS \"receivedAt\" " +
           "FROM asset_telemetry_tags t LEFT JOIN LATERAL (SELECT s.value,s.numeric_value,s.quality,s.observed_at,s.received_at " +
-          "FROM asset_telemetry_samples s WHERE s.tag_id=t.id ORDER BY s.received_at DESC,s.observed_at DESC LIMIT 1) latest ON true " +
+          "FROM asset_telemetry_samples s WHERE s.tag_id=t.id AND s.source_id=(SELECT id FROM asset_telemetry_sources " +
+          "WHERE asset_id=$1 ORDER BY (provider='gateway') DESC LIMIT 1) ORDER BY s.received_at DESC,s.observed_at DESC LIMIT 1) latest ON true " +
           "WHERE t.asset_id=$1 AND t.enabled ORDER BY t.tag_name",
         [assetId],
       ),

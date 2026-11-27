@@ -12,7 +12,9 @@ Phase 4 adds an equipment registry and hierarchy, preventive-maintenance plans a
 
 Phase 5 work in progress adds equipment alarm rules to the existing simulator. Administrators and operators can configure thresholds or state matches, severity and consecutive-sample debounce, acknowledge alarms, and pause rules after active alarms clear. Only new, fresh, good-quality, ordered readings evaluate rules; duplicate, stale and bad readings do not. Alarm transitions and acknowledgements have immutable history. These application alarms are not a safety system, and acknowledging one never resets a PLC. Rules cannot currently be edited; create a replacement and pause the old rule after it clears.
 
-These are operational workflows, not a production-launch claim: there is no offline mutation/synchronization queue, live PLC/HMI transfer, automatic production scheduling, or multi-organization tenant isolation.
+The customer-managed Phase 5 gateway polls explicitly mapped OPC UA nodes over an encrypted channel with certificate trust and a pinned server fingerprint. It is disabled until explicitly configured. Signed gateway batches are buffered locally and delivered to allowlisted equipment tags; real-source and simulator histories remain separate. Gateway setup, security boundaries, failure handling and recovery are documented in [docs/gateway.md](docs/gateway.md). No physical equipment has been tested or connected.
+
+These are operational workflows, not a production-launch claim: the gateway queue buffers telemetry only; there is no offline business-mutation synchronization, live PLC/HMI transfer, automatic production scheduling, or multi-organization tenant isolation.
 
 This first slice is for one organization per deployment. Do not place multiple customer organizations in one shared database/deployment; tenant isolation and organization switching are not implemented yet.
 

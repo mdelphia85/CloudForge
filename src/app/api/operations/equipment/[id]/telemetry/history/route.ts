@@ -17,6 +17,7 @@ export async function GET(request: Request, { params }: Context) {
       url.searchParams.get("tagId"),
       url.searchParams.get("days"),
       user,
+      url.searchParams.get("provider"),
     ), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return errorResponse(operationsError(error));

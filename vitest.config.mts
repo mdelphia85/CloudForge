@@ -11,6 +11,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["**/node_modules/**", "tests/integration/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "tests/integration/**/*.test.ts", "gateway/**"],
   },
 });
