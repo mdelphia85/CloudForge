@@ -227,6 +227,7 @@ export default function Phase3Workspace() {
         <h1 className="text-2xl font-bold">Phase 3 Operations</h1>
         <p className="mt-1 text-xs text-slate-500">Live shared records · {user.displayName} · {user.role}</p></div>
       <div className="flex gap-3"><Link href="/operations" className="rounded-md border px-3 py-2 text-xs font-semibold">Phase 1/2 workspace</Link>
+        <Link href="/operations/equipment" className="rounded-md border px-3 py-2 text-xs font-semibold">Phase 4 equipment</Link>
         <button disabled={busy} onClick={() => void refresh()} className="rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white">Refresh data</button></div>
     </header>
     <div className="mx-auto max-w-[1600px] space-y-5 p-5 lg:p-8">

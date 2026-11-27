@@ -161,7 +161,7 @@ describe("migrations", () => {
     expect(applied.rows.map((r) => r.name)).toEqual([
       "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
       "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
-      "005_phase3_review_corrections.sql",
+      "005_phase3_review_corrections.sql", "006_phase4_equipment_maintenance_telemetry.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -171,12 +171,17 @@ describe("migrations", () => {
   it("creates the expected tables and indexes", async () => {
     const tables = await testPool().query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name");
     expect(tables.rows.map((r) => r.table_name)).toEqual([
-      "audit_events", "auth_login_attempts", "engineering_assets", "engineering_bom_lines",
+      "asset_downtime_events", "asset_telemetry_hourly_rollups", "asset_telemetry_samples",
+      "asset_telemetry_sources", "asset_telemetry_tags", "audit_events", "auth_login_attempts",
+      "engineering_assets", "engineering_bom_lines",
       "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
       "engineering_change_implementation_evidence", "engineering_change_links", "engineering_change_orders",
       "engineering_documents", "engineering_revisions",
       "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
       "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
+      "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",
+      "maintenance_work_order_cost_events", "maintenance_work_order_events", "maintenance_work_order_parts",
+      "maintenance_work_orders",
       "production_downtime", "production_events", "production_job_assignments", "production_jobs",
       "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",
       "project_milestones", "project_resources", "project_task_dependencies", "project_tasks",
@@ -185,7 +190,13 @@ describe("migrations", () => {
     ]);
     const indexes = await testPool().query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
     const names = indexes.rows.map((r) => r.indexname);
-    for (const expected of ["auth_login_attempts_updated_at_idx", "sessions_expiration_idx", "inventory_stock_location_idx", "inventory_movements_item_idx", "audit_events_entity_idx", "audit_events_occurred_idx"]) {
+    for (const expected of [
+      "auth_login_attempts_updated_at_idx", "sessions_expiration_idx", "inventory_stock_location_idx",
+      "inventory_movements_item_idx", "audit_events_entity_idx", "audit_events_occurred_idx",
+      "engineering_assets_parent_idx", "engineering_assets_status_idx",
+      "asset_telemetry_samples_tag_time_idx", "asset_downtime_events_asset_time_idx",
+      "maintenance_plans_due_idx", "maintenance_work_orders_asset_idx",
+    ]) {
       expect(names).toContain(expected);
     }
   });

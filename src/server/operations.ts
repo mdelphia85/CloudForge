@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import type { AuthenticatedUser } from "@/server/auth";
+import { initializeSimulatedTelemetry } from "@/server/phase4/default-tags";
 
 export type Resource = "projects" | "tasks" | "assets" | "bom" | "documents" |
   "production" | "purchasing" | "service";
@@ -196,6 +197,7 @@ export async function createResource(resource: Resource, payload: Record<string,
       values,
     );
     const id=result.rows[0].id;
+    if (resource === "assets") await initializeSimulatedTelemetry(client,id,user.id);
     await audit(client,user,spec.label+".created",spec.table,id);
     return {id};
   });
