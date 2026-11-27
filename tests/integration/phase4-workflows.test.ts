@@ -108,6 +108,11 @@ describe("Phase 4 equipment, maintenance, and telemetry", () => {
       project_id:projectId,asset_id:assetId,title:"Assigned technician visit",assigned_to:viewerId,
     },actors.operator.cookie);
     expect(serviceJob.status).toBe(201);
+    const retirementBlocked = await dynamicCall(equipmentItem.DELETE,{id:assetId},{
+      method:"DELETE",cookie:actors.operator.cookie,
+    });
+    expect(retirementBlocked.status).toBe(409);
+    expect(retirementBlocked.body.code).toBe("ACTIVE_WORK");
 
     await testPool().query("UPDATE engineering_assets SET created_at=now()-interval '1200 seconds' WHERE id=$1",[assetId]);
     const fault = await call(simulate.POST,{
@@ -123,6 +128,8 @@ describe("Phase 4 equipment, maintenance, and telemetry", () => {
       method:"POST",cookie:actors.operator.cookie,body:{assetId,mode:"invalid"},
     });
     expect(badQuality.status).toBe(200);
+    expect((await dynamicCall(equipmentTelemetry.GET,{id:assetId},{cookie:actors.operator.cookie})).body.tags)
+      .toEqual(expect.arrayContaining([expect.objectContaining({tagName:"temperature_c",quality:"bad"})]));
     const stale = await call(simulate.POST,{
       method:"POST",cookie:actors.operator.cookie,body:{assetId,mode:"stale"},
     });
@@ -135,7 +142,6 @@ describe("Phase 4 equipment, maintenance, and telemetry", () => {
     expect(telemetry.body.connection).toBe("connected");
     expect(telemetry.body.tags).toEqual(expect.arrayContaining([
       expect.objectContaining({tagName:"machine_state",value:"running",freshness:"stale",orderingState:"out_of_order"}),
-      expect.objectContaining({tagName:"temperature_c",quality:"bad"}),
     ]));
     const machineStateTag = (telemetry.body.tags as Array<{id:string;tagName:string}>)
       .find((tag) => tag.tagName==="machine_state")!;

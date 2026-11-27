@@ -69,10 +69,10 @@ export async function requireAssetAccess(
   if (user.role !== "viewer") return asset;
 
   const access = await client.query(
-    "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND p.created_by=$2) " +
+    "SELECT (EXISTS(SELECT 1 FROM projects p WHERE p.id=$1 AND p.created_by=$2) " +
       "OR EXISTS(SELECT 1 FROM project_resources r WHERE r.project_id=$1 AND r.user_id=$2) " +
       "OR EXISTS(SELECT 1 FROM field_service_jobs s WHERE s.asset_id=$3 AND s.assigned_to=$2) " +
-      "OR EXISTS(SELECT 1 FROM maintenance_work_orders m WHERE m.asset_id=$3 AND m.assigned_to=$2)",
+      "OR EXISTS(SELECT 1 FROM maintenance_work_orders m WHERE m.asset_id=$3 AND m.assigned_to=$2)) AS exists",
     [asset.project_id, user.id, assetId],
   );
   if (!access.rows[0].exists) {

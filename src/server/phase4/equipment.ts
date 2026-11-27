@@ -246,9 +246,9 @@ export async function updateEquipment(assetId: string, body: Record<string, unkn
     const nextStatus = input.status ?? current.status as AssetInput["status"];
     if (nextStatus === "retired" && current.status !== "retired") {
       const open = await client.query(
-        "SELECT EXISTS(SELECT 1 FROM maintenance_work_orders WHERE asset_id=$1 AND status IN ('scheduled','in_progress')) " +
+        "SELECT (EXISTS(SELECT 1 FROM maintenance_work_orders WHERE asset_id=$1 AND status IN ('scheduled','in_progress')) " +
           "OR EXISTS(SELECT 1 FROM production_jobs WHERE asset_id=$1 AND status IN ('queued','in_progress','on_hold')) " +
-          "OR EXISTS(SELECT 1 FROM field_service_jobs WHERE asset_id=$1 AND status IN ('open','scheduled','in_progress'))",
+          "OR EXISTS(SELECT 1 FROM field_service_jobs WHERE asset_id=$1 AND status IN ('open','scheduled','in_progress'))) AS exists",
         [assetId],
       );
       if (open.rows[0].exists) throw new HttpError(409, "ACTIVE_WORK", "Complete or cancel active production, service, and maintenance work before retiring equipment.");
