@@ -78,7 +78,7 @@ describe("Phase 2 BOM migration provenance", () => {
       ["MIG-BOM-001", "Migration BOM project", "Example Works", adminId],
     );
     const item = await testPool().query<{ id: string }>(
-      "INSERT INTO inventory_items(sku,name,category,unit,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id",
+      "INSERT INTO inventory_items(sku,name,category,unit,reorder_point,created_by) VALUES($1,$2,$3,$4,0,$5) RETURNING id",
       ["MIG-BOM-ITEM", "Legacy control module", "Controls", "ea", adminId],
     );
     const projectId = project.rows[0].id;
