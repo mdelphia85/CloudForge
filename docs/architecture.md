@@ -23,6 +23,8 @@ Phase 5's current alarm increment evaluates simulator readings transactionally. 
 
 This remains a single-organization application; tenant isolation and organization switching are not implemented, so multiple customers must not share a database. Live PLC/HMI transfers, offline mutation/synchronization, automatic scheduling, and AI operations are not implemented. Local authentication includes per-identifier login throttling, administrator account enable/disable, and session revocation; MFA and password recovery are not implemented. Migration `007` adds a session epoch to invalidate sign-ins already in flight when an account is disabled or its sessions are revoked. Roll back by restoring a tested pre-migration backup or rolling forward; do not remove security state from an active database.
 
+Migration `009` permits anonymous authentication-failure audit events without a user actor or target. Each failed or throttled sign-in records a SHA-256 hash of the normalized identifier, not the password. These hashes are pseudonymous and may be guessed, so restrict audit access and monitor storage. Audit writes and failed-attempt counters are atomic. Preserve the audit history when recovering or rolling forward.
+
 ## Target shape
 
 ```text

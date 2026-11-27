@@ -235,7 +235,40 @@ describe("login and logout", () => {
     expect(response.body.code).toBe("TOO_MANY_ATTEMPTS");
   });
 
-  it.todo("records failed login attempts in the audit log (not implemented - see Phase 1 report)");
+  it("audits failed and throttled logins without attributing them to a user or recording credentials", async () => {
+    const email = "audit-unknown@example.test";
+    const password = "Wrong-Password-123!";
+    const knownEmail = "audit-known@example.test";
+    await testPool().query(
+      "INSERT INTO users (email, display_name, password_hash, role) " +
+      "SELECT $1, 'Audit Test', password_hash, 'viewer' FROM users WHERE email='owner@example.test'",
+      [knownEmail],
+    );
+    const known = await login({ email: knownEmail, password });
+    expect(known.status).toBe(401);
+    for (let i = 0; i < 9; i++) {
+      const response = await login({ email, password });
+      expect(response.status).toBe(i < 7 ? 401 : 429);
+    }
+
+    const events = await testPool().query(
+      "SELECT actor_user_id, entity_id, details FROM audit_events " +
+      "WHERE action='auth.login_failed' AND details->>'identifierHash' = $1 ORDER BY occurred_at",
+      [hashToken(email)],
+    );
+    expect(events.rows).toHaveLength(9);
+    expect(events.rows.every((event) => event.actor_user_id === null && event.entity_id === null)).toBe(true);
+    expect(events.rows.map((event) => event.details.blocked)).toEqual([
+      false, false, false, false, false, false, false, true, true,
+    ]);
+    expect(JSON.stringify(events.rows)).not.toContain(email);
+    expect(JSON.stringify(events.rows)).not.toContain(password);
+    const knownEvents = await testPool().query(
+      "SELECT actor_user_id, entity_id FROM audit_events WHERE action='auth.login_failed' AND details->>'identifierHash'=$1",
+      [hashToken(knownEmail)],
+    );
+    expect(knownEvents.rows).toEqual([{ actor_user_id: null, entity_id: null }]);
+  });
 });
 
 describe("administrator account controls", () => {

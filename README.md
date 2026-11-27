@@ -91,7 +91,7 @@ docker run --rm -p 3000:3000 -e DEPLOYMENT_MODE=local -e DATABASE_URL=postgresql
 
 Run schema migrations as a controlled deployment step with a migration-capable database role: `docker run --rm --env-file .env.local --entrypoint node cloud-forge:local scripts/migrate.mjs`. Keep the application database role least-privileged for normal runtime; provision a separate role for migrations.
 
-Production deployment still requires secrets management, logging, backups, network controls, password recovery, and a formal security/compliance process. Local password authentication includes per-identifier login throttling and administrator session revocation, but does not yet include MFA or password recovery. This repository does not claim DoD, NIST 800-171, CMMC, or DFARS compliance by itself.
+Production deployment still requires secrets management, logging, backups, network controls, password recovery, and a formal security/compliance process. Local password authentication includes per-identifier login throttling and administrator session revocation, but does not yet include MFA or password recovery. Failed and throttled login attempts are recorded in the append-only audit log without attributing them to a user; the normalized identifier is hashed, not encrypted, and may be guessable. Protect audit data and monitor storage growth. This repository does not claim DoD, NIST 800-171, CMMC, or DFARS compliance by itself.
 
 ## Next.js resources
 
