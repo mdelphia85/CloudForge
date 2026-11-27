@@ -2,10 +2,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  call, closeDatabases, itemBody, loadHandlers, runMigrations,
-  seedActors, testPool,
+  call, closeDatabases, hashToken, runMigrations, testPool,
 } from "./harness";
-import * as resources from "@/app/api/operations/[resource]/route";
 import * as materialShortages from "@/app/api/operations/material-shortages/route";
 import * as bomStatus from "@/app/api/operations/engineering/bom-revisions/[id]/status/route";
 
@@ -57,37 +55,44 @@ describe("Phase 2 BOM migration provenance", () => {
   it("keeps operator-authored legacy BOMs provisional until an explicit engineering approval", async () => {
     await applyMigrationsThrough("003_phase2_operations.sql", true);
 
-    const handlers = await loadHandlers();
-    const actors = await seedActors(handlers);
-    const project = await call((request) => resources.POST(request, {
-      params: Promise.resolve({ resource: "projects" }),
-    }), {
-      method: "POST",
-      cookie: actors.admin.cookie,
-      body: { code: "MIG-BOM-001", name: "Migration BOM project", customer: "Example Works" },
-    });
-    expect(project.status).toBe(201);
-    const item = await call(handlers.inventory.POST, {
-      method: "POST",
-      cookie: actors.admin.cookie,
-      body: itemBody({ sku: "MIG-BOM-ITEM", name: "Legacy control module" }),
-    });
-    expect(item.status).toBe(201);
-    const [itemRow, operator] = await Promise.all([
-      testPool().query("SELECT id FROM inventory_items WHERE sku=$1", ["MIG-BOM-ITEM"]),
-      testPool().query("SELECT id FROM users WHERE email=$1", [actors.operator.email]),
-    ]);
+    const users = await testPool().query<{ id: string; role: string }>(
+      "INSERT INTO users(email,display_name,password_hash,role) VALUES " +
+      "('migration-admin@example.test','Migration admin','unused','admin')," +
+      "('migration-operator@example.test','Migration operator','unused','operator') RETURNING id,role",
+    );
+    const adminId = users.rows.find((row) => row.role === "admin")!.id;
+    const operatorId = users.rows.find((row) => row.role === "operator")!.id;
+    const adminToken = "a".repeat(43);
+    const operatorToken = "b".repeat(43);
+    const actors = {
+      admin: { id: adminId, cookie: `cloudforge_session=${adminToken}` },
+      operator: { cookie: `cloudforge_session=${operatorToken}` },
+    };
+    await testPool().query(
+      "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES " +
+      "($1,$2,now()+interval '1 hour'),($3,$4,now()+interval '1 hour')",
+      [hashToken(adminToken), adminId, hashToken(operatorToken), operatorId],
+    );
+    const project = await testPool().query<{ id: string }>(
+      "INSERT INTO projects(code,name,customer,created_by) VALUES($1,$2,$3,$4) RETURNING id",
+      ["MIG-BOM-001", "Migration BOM project", "Example Works", adminId],
+    );
+    const item = await testPool().query<{ id: string }>(
+      "INSERT INTO inventory_items(sku,name,category,unit,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id",
+      ["MIG-BOM-ITEM", "Legacy control module", "Controls", "ea", adminId],
+    );
+    const projectId = project.rows[0].id;
     await testPool().query(
       "INSERT INTO engineering_bom_lines(project_id,item_id,required_qty,revision,added_by,created_at) " +
         "VALUES($1,$2,2,'A',$3,now()-interval '2 days'),($1,$2,3,'B',$3,now()-interval '1 day')",
-      [project.body.id, itemRow.rows[0].id, operator.rows[0].id],
+      [projectId, item.rows[0].id, operatorId],
     );
 
     await applyMigrationsThrough("004_phase3_manufacturing_change_control.sql");
     const imported = await testPool().query(
       "SELECT id,revision_code,status,approved_by,approved_at,change_notes " +
         "FROM engineering_bom_revisions WHERE project_id=$1 ORDER BY revision_code",
-      [project.body.id],
+      [projectId],
     );
     expect(imported.rows).toHaveLength(2);
     expect(imported.rows[0]).toMatchObject({
@@ -100,7 +105,7 @@ describe("Phase 2 BOM migration provenance", () => {
     const legacyId = imported.rows[1].id as string;
     await testPool().query(
       "UPDATE engineering_bom_revisions SET status='approved',approved_by=$2,approved_at=created_at WHERE id=$1",
-      [legacyId, operator.rows[0].id],
+      [legacyId, operatorId],
     );
     const correctionMigration = runMigrations();
     expect(correctionMigration.status, correctionMigration.output).toBe(0);
@@ -112,7 +117,7 @@ describe("Phase 2 BOM migration provenance", () => {
 
     const provisional = await call(materialShortages.GET, {
       cookie: actors.admin.cookie,
-      path: `/api/operations/material-shortages?projectId=${project.body.id}`,
+      path: `/api/operations/material-shortages?projectId=${projectId}`,
     });
     expect(provisional.status).toBe(200);
     expect(provisional.body.shortages).toEqual([
@@ -129,7 +134,7 @@ describe("Phase 2 BOM migration provenance", () => {
     })).status).toBe(200);
     const approved = await call(materialShortages.GET, {
       cookie: actors.admin.cookie,
-      path: `/api/operations/material-shortages?projectId=${project.body.id}`,
+      path: `/api/operations/material-shortages?projectId=${projectId}`,
     });
     expect(approved.body.shortages[0]).toMatchObject({ bomStatus: "approved", demandStatus: "approved" });
     const approvalHistory = await testPool().query(
