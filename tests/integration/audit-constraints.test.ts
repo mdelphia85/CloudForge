@@ -162,6 +162,7 @@ describe("migrations", () => {
       "001_inventory_foundation.sql", "002_auth_login_attempts.sql",
       "003_phase2_operations.sql", "004_phase3_manufacturing_change_control.sql",
       "005_phase3_review_corrections.sql", "006_phase4_equipment_maintenance_telemetry.sql",
+      "007_phase5_account_controls.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);

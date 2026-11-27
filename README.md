@@ -39,7 +39,7 @@ npm run dev
 
 For the first administrator only, set `BOOTSTRAP_ADMIN_TOKEN` to a random secret of at least 32 characters. Open the app and submit that token with the administrator account details. Remove the token from the deployment configuration after setup. Administrators can create additional local accounts from the inventory workspace.
 
-Passwords must be at least 14 characters and include uppercase and lowercase letters, a number, and a symbol. Database backups, TLS, PostgreSQL access controls, secret rotation, and operational hardening remain deployment responsibilities. The application does not provide offline mutation queues or claim regulatory compliance.
+Passwords must be at least 14 characters and include uppercase and lowercase letters, a number, and a symbol. Administrators can disable or enable accounts and revoke sessions from the inventory workspace; disabling also revokes existing sessions. The last active administrator cannot be disabled. Database backups, TLS, PostgreSQL access controls, secret rotation, and operational hardening remain deployment responsibilities. The application does not provide offline mutation queues or claim regulatory compliance.
 
 The initial cloud domain is `cloudforge.live`. Set `NEXT_PUBLIC_APP_URL=https://cloudforge.live` in the cloud deployment environment. Keep the local value as `http://localhost:3000` during development and use the customer-provided URL for on-prem deployments.
 
@@ -89,7 +89,7 @@ docker run --rm -p 3000:3000 -e DEPLOYMENT_MODE=local -e DATABASE_URL=postgresql
 
 Run schema migrations as a controlled deployment step with a migration-capable database role: `docker run --rm --env-file .env.local --entrypoint node cloud-forge:local scripts/migrate.mjs`. Keep the application database role least-privileged for normal runtime; provision a separate role for migrations.
 
-Production deployment still requires secrets management, logging, backups, network controls, login throttling, password recovery, session revocation, and a formal security/compliance process. Local password authentication is provided for isolated deployments; it does not yet include MFA, password recovery, or login throttling. This repository does not claim DoD, NIST 800-171, CMMC, or DFARS compliance by itself.
+Production deployment still requires secrets management, logging, backups, network controls, password recovery, and a formal security/compliance process. Local password authentication includes per-identifier login throttling and administrator session revocation, but does not yet include MFA or password recovery. This repository does not claim DoD, NIST 800-171, CMMC, or DFARS compliance by itself.
 
 ## Next.js resources
 

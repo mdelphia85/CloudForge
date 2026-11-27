@@ -45,8 +45,15 @@ export function sessionCookieOptions() {
   };
 }
 
-export async function createSession(userId: string, token: string, action = "auth.login"): Promise<void> {
+export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number): Promise<void> {
   await inTransaction(async (client) => {
+    const user = await client.query<{ is_active: boolean; session_epoch: number }>(
+      "SELECT is_active, session_epoch FROM users WHERE id = $1 FOR UPDATE",
+      [userId],
+    );
+    if (!user.rows[0]?.is_active || (expectedEpoch !== undefined && user.rows[0].session_epoch !== expectedEpoch)) {
+      throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
+    }
     await client.query(
       `INSERT INTO sessions (token_hash, user_id, expires_at)
        VALUES ($1, $2, now() + ($3 * interval '1 second'))`,

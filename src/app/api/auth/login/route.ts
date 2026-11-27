@@ -27,8 +27,9 @@ export async function POST(request: Request) {
       display_name: string;
       role: "admin" | "operator" | "viewer";
       password_hash: string;
+      session_epoch: number;
     }>(
-      `SELECT id, email, display_name, role, password_hash
+      `SELECT id, email, display_name, role, password_hash, session_epoch
          FROM users WHERE email = $1 AND is_active = true`,
       [email],
     );
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
     await clearLoginFailures(email);
 
     const sessionToken = newSessionToken();
-    await createSession(user.id, sessionToken);
+    await createSession(user.id, sessionToken, "auth.login", user.session_epoch);
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
     });
