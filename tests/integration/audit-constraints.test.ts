@@ -172,6 +172,7 @@ describe("migrations", () => {
       "007_phase5_account_controls.sql", "008_phase5_equipment_alarms.sql",
       "009_phase5_failed_login_audit.sql",
       "010_phase5_industrial_gateways.sql",
+      "011_phase5_alarm_source_state.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -187,7 +188,7 @@ describe("migrations", () => {
       "engineering_bom_revision_lines", "engineering_bom_revisions", "engineering_change_approvals",
       "engineering_change_implementation_evidence", "engineering_change_links", "engineering_change_orders",
       "engineering_documents", "engineering_revisions", "equipment_alarm_events",
-      "equipment_alarm_rules", "equipment_alarms",
+      "equipment_alarm_rule_source_state", "equipment_alarm_rules", "equipment_alarms",
       "field_program_installs", "field_service_jobs", "field_service_parts", "field_service_updates",
       "gateway_allowed_tags", "gateway_telemetry_batches", "industrial_gateways",
       "inventory_items", "inventory_movements", "inventory_reservations", "inventory_stock",
