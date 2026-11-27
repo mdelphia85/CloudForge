@@ -10,7 +10,7 @@ export async function createSimulator(dir, assetId) {
   const port = listener.address().port;
   await new Promise((resolve) => listener.close(resolve));
   const serverManager = new OPCUACertificateManager({
-    rootFolder: join(dir, "server"), automaticallyAcceptUnknownCertificate: true,
+    rootFolder: join(dir, "server"), automaticallyAcceptUnknownCertificate: true, disableFileWatchers: true,
   });
   const options = {
     port, host: "127.0.0.1", hostname: "127.0.0.1",
@@ -34,7 +34,7 @@ export async function createSimulator(dir, assetId) {
     return server;
   };
   const server = await start();
-  const manager = new OPCUACertificateManager({ rootFolder: join(dir, "client") });
+  const manager = new OPCUACertificateManager({ rootFolder: join(dir, "client"), disableFileWatchers: true });
   await manager.initialize();
   const certificateFile = join(dir, "client-certificate.pem");
   const applicationUri = "urn:cloudforge:test:gateway";
@@ -54,7 +54,7 @@ export async function createSimulator(dir, assetId) {
   };
   await manager.dispose();
   const trust = async () => {
-    const trustManager = new OPCUACertificateManager({ rootFolder: config.trustStore });
+    const trustManager = new OPCUACertificateManager({ rootFolder: config.trustStore, disableFileWatchers: true });
     await trustManager.initialize();
     try {
       await trustManager.trustCertificate(server.getCertificate());
