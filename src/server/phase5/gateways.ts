@@ -252,8 +252,8 @@ export async function ingestGateway(request: Request) {
     const result = await ingestTelemetry(
       client,assetId,source.rows[0].id,{ gatewayId },allowed.rows,readings,body.connected,
       body.connected ? "" : body.diagnostic === "invalid_reading"
-        ? "OPC UA returned an invalid value or timestamp; measurements are not live."
-        : "Gateway reported an OPC UA disconnection.",
+        ? "Industrial provider returned an invalid value or timestamp; measurements are not live."
+        : "Gateway reported an industrial provider disconnection.",
       capturedAt,sequence < Number(gateway.highest_sequence),body.diagnostic === "invalid_reading",
     );
     await client.query(

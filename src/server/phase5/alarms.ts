@@ -15,6 +15,31 @@ type Rule = {
 };
 export type AlarmActor = { user: AuthenticatedUser; gatewayId?: never } | { user?: never; gatewayId: string };
 
+function ruleConfiguration(body: Record<string, unknown>, defaultDebounce: boolean) {
+  const condition = body.condition;
+  if (condition !== "above" && condition !== "below" && condition !== "equals") {
+    throw new HttpError(400, "INVALID_CONDITION", "Choose above, below, or equals.");
+  }
+  const severity = body.severity;
+  if (severity !== "low" && severity !== "medium" && severity !== "high" && severity !== "critical") {
+    throw new HttpError(400, "INVALID_SEVERITY", "Choose low, medium, high, or critical.");
+  }
+  const threshold = shortText(body.threshold, "threshold", 1000);
+  const debounceSamples = body.debounceSamples === undefined && defaultDebounce ? 1 : Number(body.debounceSamples);
+  if (!Number.isInteger(debounceSamples) || debounceSamples < 1 || debounceSamples > 10) {
+    throw new HttpError(400, "INVALID_DEBOUNCE", "Debounce must be from 1 to 10 samples.");
+  }
+  return { condition, threshold, severity, debounceSamples };
+}
+
+function validateThreshold(type: string, config: ReturnType<typeof ruleConfiguration>) {
+  if ((type !== "number" && config.condition !== "equals") ||
+      (type === "number" && !Number.isFinite(Number(config.threshold))) ||
+      (type === "boolean" && config.threshold !== "true" && config.threshold !== "false")) {
+    throw new HttpError(400, "INVALID_THRESHOLD", "Condition and threshold must match the tag's data type.");
+  }
+}
+
 async function recordAutomaticAlarm(
   client: PoolClient, actor: AlarmActor, alarmId: string, action: "triggered" | "cleared",
   value: string, ruleId: string, assetId: string,
@@ -124,19 +149,7 @@ export async function createAlarmRule(assetId: string, body: Record<string, unkn
   const tagId = requireUuid(body.tagId, "tagId");
   const name = shortText(body.name, "name", 160);
   if (name.length < 2) throw new HttpError(400, "INVALID_FIELD", "Name must have at least two characters.");
-  const condition = body.condition;
-  if (condition !== "above" && condition !== "below" && condition !== "equals") {
-    throw new HttpError(400, "INVALID_CONDITION", "Choose above, below, or equals.");
-  }
-  const severity = body.severity;
-  if (severity !== "low" && severity !== "medium" && severity !== "high" && severity !== "critical") {
-    throw new HttpError(400, "INVALID_SEVERITY", "Choose low, medium, high, or critical.");
-  }
-  const threshold = shortText(body.threshold, "threshold", 1000);
-  const debounce = body.debounceSamples === undefined ? 1 : Number(body.debounceSamples);
-  if (!Number.isInteger(debounce) || debounce < 1 || debounce > 10) {
-    throw new HttpError(400, "INVALID_DEBOUNCE", "Debounce must be from 1 to 10 samples.");
-  }
+  const config = ruleConfiguration(body, true);
   return inTransaction(async (client) => {
     const asset = await requireAssetAccess(client, assetId, user, true);
     if (asset.status === "retired") throw new HttpError(409, "EQUIPMENT_RETIRED", "Cannot add rules to retired equipment.");
@@ -145,19 +158,52 @@ export async function createAlarmRule(assetId: string, body: Record<string, unkn
       [tagId, assetId],
     );
     if (!tags.rowCount) throw new HttpError(404, "TELEMETRY_TAG_NOT_FOUND", "Telemetry tag not found for this equipment.");
-    const type = tags.rows[0].data_type;
-    if ((type !== "number" && condition !== "equals") ||
-        (type === "number" && !Number.isFinite(Number(threshold))) ||
-        (type === "boolean" && threshold !== "true" && threshold !== "false")) {
-      throw new HttpError(400, "INVALID_THRESHOLD", "Condition and threshold must match the tag's data type.");
-    }
+    validateThreshold(tags.rows[0].data_type, config);
     const rule = await client.query<{ id: string }>(
       `INSERT INTO equipment_alarm_rules(asset_id,tag_id,name,condition,threshold,severity,debounce_samples,created_by)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [assetId, tagId, name, condition, threshold, severity, debounce, user.id],
+      [assetId, tagId, name, config.condition, config.threshold, config.severity, config.debounceSamples, user.id],
     );
-    await audit(client, user, "equipment_alarm.rule_created", "equipment_alarm_rule", rule.rows[0].id, { assetId, tagId, name, condition, threshold, severity, debounce });
+    await audit(client, user, "equipment_alarm.rule_created", "equipment_alarm_rule", rule.rows[0].id, { assetId, tagId, name, condition: config.condition, threshold: config.threshold, severity: config.severity, debounce: config.debounceSamples });
     return { id: rule.rows[0].id };
+  });
+}
+
+export async function editAlarmRule(assetId: string, ruleId: string, body: Record<string, unknown>, user: AuthenticatedUser) {
+  requireOperationsRole(user);
+  if (Object.keys(body).some((key) => !["condition", "threshold", "severity", "debounceSamples"].includes(key))) {
+    throw new HttpError(400, "INVALID_FIELD", "Only the condition, threshold, severity and debounce can be edited.");
+  }
+  const next = ruleConfiguration(body, false);
+  return inTransaction(async (client) => {
+    const asset = await requireAssetAccess(client, assetId, user, true);
+    if (asset.status === "retired") throw new HttpError(409, "EQUIPMENT_RETIRED", "Cannot edit rules for retired equipment.");
+    const result = await client.query<{
+      condition: "above" | "below" | "equals"; threshold: string; severity: string;
+      debounce_samples: number; data_type: string;
+    }>(
+      `SELECT r.condition,r.threshold,r.severity,r.debounce_samples,t.data_type
+       FROM equipment_alarm_rules r JOIN asset_telemetry_tags t ON t.id=r.tag_id
+       WHERE r.id=$1 AND r.asset_id=$2 FOR UPDATE OF r`,
+      [ruleId, assetId],
+    );
+    if (!result.rowCount) throw new HttpError(404, "ALARM_RULE_NOT_FOUND", "Alarm rule not found for this equipment.");
+    const row = result.rows[0];
+    validateThreshold(row.data_type, next);
+    const previous = { condition: row.condition, threshold: row.threshold, severity: row.severity, debounceSamples: row.debounce_samples };
+    if (previous.condition === next.condition && previous.threshold === next.threshold &&
+        previous.severity === next.severity && previous.debounceSamples === next.debounceSamples) {
+      return { id: ruleId, changed: false };
+    }
+    const active = await client.query("SELECT 1 FROM equipment_alarms WHERE rule_id=$1 AND cleared_at IS NULL", [ruleId]);
+    if (active.rowCount) throw new HttpError(409, "ALARM_ACTIVE", "An active alarm must clear before its rule can be edited.");
+    await client.query(
+      "UPDATE equipment_alarm_rules SET condition=$2,threshold=$3,severity=$4,debounce_samples=$5,consecutive_matches=0 WHERE id=$1",
+      [ruleId, next.condition, next.threshold, next.severity, next.debounceSamples],
+    );
+    await client.query("DELETE FROM equipment_alarm_rule_source_state WHERE rule_id=$1", [ruleId]);
+    await audit(client, user, "equipment_alarm.rule_edited", "equipment_alarm_rule", ruleId, { assetId, previous, next });
+    return { id: ruleId, changed: true };
   });
 }
 

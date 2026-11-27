@@ -607,6 +607,27 @@ export default function EquipmentWorkspace() {
                       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: !rule.enabled }),
                     }), rule.enabled ? "Alarm rule paused." : "Alarm rule enabled.",
                   )}>{rule.enabled ? "Pause" : "Enable"}</button>
+                  <details className="mb-2 mt-1 rounded border p-2">
+                    <summary className="cursor-pointer text-teal-800">Edit rule</summary>
+                    <p className="mt-1 text-slate-600">Active alarms must clear before editing. Pending debounce counts reset when settings change.</p>
+                    <form key={`${String(rule.condition)}:${String(rule.threshold)}:${String(rule.severity)}:${String(rule.debounceSamples)}`}
+                      className="mt-2 grid gap-2 sm:grid-cols-2" onSubmit={submit(async (values) => {
+                        await api(`/api/operations/equipment/${selectedAsset.id}/alarms/rules/${String(rule.id)}`, {
+                          method: "PUT", headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ condition: values.condition, threshold: values.threshold,
+                            severity: values.severity, debounceSamples: Number(values.debounceSamples) }),
+                        });
+                      }, "Alarm rule updated.")}>
+                      <Select label="Condition" name="condition" required defaultValue={String(rule.condition)}
+                        options={["above","below","equals"].map((value) => ({ value, label: value }))}/>
+                      <Field label="Threshold or state" name="threshold" required defaultValue={String(rule.threshold)}/>
+                      <Select label="Severity" name="severity" required defaultValue={String(rule.severity)}
+                        options={["low","medium","high","critical"].map((value) => ({ value, label: value }))}/>
+                      <Field label="Consecutive matching samples (1–10)" name="debounceSamples" type="number" min="1"
+                        required defaultValue={String(rule.debounceSamples)}/>
+                      <div><Button type="submit" disabled={busy}>Save rule</Button></div>
+                    </form>
+                  </details>
                 </li>)}</ul>
               </details>}
             </div>

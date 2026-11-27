@@ -15,7 +15,7 @@ try {
     queueFile: join(dir, "buffer.sqlite"), queueMaxItems: 10, queueMaxBytes: 10000,
     pollIntervalMs: 1000, deliveryTimeoutMs: 2000,
     allowInsecureLoopback: true,
-    opcua: simulator.config,
+    provider: { type: "opcua", options: simulator.config },
   };
   const configPath = join(dir, "gateway.json");
   await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });

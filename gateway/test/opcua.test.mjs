@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { InvalidOpcUaReadingError, OpcUaReader, validateOpcUaConfig } from "../src/opcua.mjs";
 import { createSimulator } from "./simulator.mjs";
+import { createConfiguredProvider } from "../src/providers.mjs";
+import { validateProvider, validateProviderReadings } from "../src/provider.mjs";
 
 test("secure read-only polling connects to a local OPC UA simulator and rejects untrusted servers", { timeout: 90000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), "cloudforge-opcua-test-"));
@@ -16,7 +18,7 @@ test("secure read-only polling connects to a local OPC UA simulator and rejects 
     server = simulator.server;
     const { config } = simulator;
     validateOpcUaConfig(config);
-    reader = new OpcUaReader(config);
+    reader = await createConfiguredProvider({ opcua: config });
     await assert.rejects(reader.read());
     await reader.close();
     reader = undefined;
@@ -24,8 +26,9 @@ test("secure read-only polling connects to a local OPC UA simulator and rejects 
     reader = new OpcUaReader({ ...config, serverCertificateSha256: "0".repeat(64) });
     await assert.rejects(reader.read(), /fingerprint/);
     await reader.close();
-    reader = new OpcUaReader(config);
+    reader = await createConfiguredProvider({ provider: { type: "opcua", options: config } });
     const readings = await reader.read();
+    validateProviderReadings(readings, validateProvider(reader));
     assert.equal(readings.get(config.mappings[0].assetId)[0].value, 42);
     assert.equal(readings.get(config.mappings[0].assetId)[0].quality, "good");
     assert.ok(readings.get(config.mappings[0].assetId)[0].observedAt);

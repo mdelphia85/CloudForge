@@ -3,10 +3,15 @@ import { OPCUACertificateManager } from "node-opcua-certificate-manager";
 import {
   AttributeIds, MessageSecurityMode, OPCUAClient, SecurityPolicy, UserTokenType, coerceNodeId,
 } from "node-opcua-client";
+import { ProviderError } from "./provider.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export class InvalidOpcUaReadingError extends Error {}
+export class InvalidOpcUaReadingError extends ProviderError {
+  constructor(message) {
+    super("invalid_reading", message);
+  }
+}
 
 export function validateOpcUaConfig(config) {
   const endpoint = new URL(config.endpoint);
@@ -44,6 +49,7 @@ export class OpcUaReader {
   constructor(config, identity = null) {
     validateOpcUaConfig(config);
     this.config = config;
+    this.mappings = config.mappings.map(({ assetId, tagName, dataType }) => ({ assetId, tagName, dataType }));
     this.identity = identity;
     this.manager = new OPCUACertificateManager({
       rootFolder: config.trustStore,
