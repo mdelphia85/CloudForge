@@ -287,7 +287,9 @@ export default function EquipmentWorkspace() {
   }, [chartPoints]);
   const statusTag = selectedTelemetry?.tags.find((tag) => tag.semanticType === "state");
   const freshness = statusTag?.freshness ?? "missing";
-  const machineState = statusTag?.value ?? "unknown";
+  const stateLive = selectedTelemetry?.connection === "connected" && freshness === "fresh" &&
+    statusTag?.quality === "good" && statusTag.orderingState === "ordered";
+  const machineState = stateLive ? statusTag?.value ?? "unknown" : "Unavailable";
   const ordersForAsset = workOrders.filter((order) => order.assetId === selectedAssetId);
   const detail = workOrderDetail as { workOrder?: Row; checklist?: Row[]; parts?: Row[]; costs?: Row[]; events?: Row[] } | null;
   const selectedOrderStatus = String(detail?.workOrder?.status ?? selectedWorkOrder?.status ?? "");
@@ -463,10 +465,10 @@ export default function EquipmentWorkspace() {
                 <strong className="mt-1 block text-lg capitalize">{selectedTelemetry?.connection ?? "unknown"}</strong>
                 <span className="text-[11px]">Last source heartbeat: {format(selectedTelemetry?.lastSeenAt)}</span>
               </div>
-              <div className={`rounded-lg p-4 ${freshness === "fresh" ? "bg-teal-50 text-teal-900" : "bg-amber-50 text-amber-900"}`}>
+              <div className={`rounded-lg p-4 ${stateLive ? "bg-teal-50 text-teal-900" : "bg-amber-50 text-amber-900"}`}>
                 <span className="text-[10px] font-bold uppercase tracking-wider">Machine state</span>
                 <strong className="mt-1 block text-lg capitalize">{String(machineState)}</strong>
-                <span className="text-[11px]">Reading freshness: {freshness} · quality {statusTag?.quality ?? "missing"}</span>
+                <span className="text-[11px]">{stateLive ? "Current reading" : "Not live"} · {freshness} · quality {statusTag?.quality ?? "missing"}</span>
               </div>
             </div>
             {canManage && <div className="mt-4 flex flex-wrap items-end gap-2">
@@ -487,7 +489,7 @@ export default function EquipmentWorkspace() {
                   {tag.quality ?? "no sample"}
                 </span></div>
                 <p className="mt-1 text-lg font-bold">{format(tag.value)}{tag.unit ? ` ${tag.unit}` : ""}</p>
-                <p className="text-[10px] text-slate-500">{tag.freshness ?? "missing"} · {tag.orderingState ?? "no sample"} · observed {format(tag.observedAt)}</p>
+                <p className="text-[10px] text-slate-500">{selectedTelemetry.connection === "connected" && tag.freshness === "fresh" && tag.quality === "good" && tag.orderingState === "ordered" ? "Current" : "Cached / not live"} · {tag.freshness ?? "missing"} · {tag.orderingState ?? "no sample"} · observed {format(tag.observedAt)}</p>
               </div>)}
             </div>
             <div className="mt-5">
