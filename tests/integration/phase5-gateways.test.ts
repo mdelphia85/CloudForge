@@ -142,13 +142,75 @@ it("enrolls a gateway, preserves source provenance and processes authenticated r
   }), nextKeys.privateKey)).status).toBe(200);
   expect((await status()).body.connection).toBe("connected");
   expect((await call((request) => alarms.GET(request, context), { cookie: actors.admin.cookie })).body.alarms[0].clearedAt).toBeTruthy();
+  expect((await deliver({
+    sequence: 7, assetId, connected: false, capturedAt: new Date().toISOString(),
+    readings: [], diagnostic: "invalid_reading",
+  }, nextKeys.privateKey)).status).toBe(200);
+  const invalid = await status();
+  expect(invalid.body.connection).toBe("faulted");
+  expect(invalid.body.lastError).toContain("invalid value or timestamp");
+  expect(invalid.body.tags.find((tag: { id: string }) => tag.id === temp.id).value).toBe("30");
   await testPool().query("UPDATE industrial_gateways SET expires_at=now()-interval '1 second' WHERE id=$1", [gatewayId]);
-  expect((await deliver(body(7,60), nextKeys.privateKey)).status).toBe(401);
+  expect((await deliver(body(8,60), nextKeys.privateKey)).status).toBe(401);
   expect((await status()).body.connection).toBe("disconnected");
   expect((await change("revoke")).status).toBe(200);
   expect((await change("enable")).status).toBe(409);
-  expect((await deliver(body(7,60), nextKeys.privateKey)).status).toBe(401);
+  expect((await deliver(body(8,60), nextKeys.privateKey)).status).toBe(401);
   const replacement = await call(gateways.POST, { method: "POST", cookie: actors.admin.cookie, body: registration });
   expect(replacement.status).toBe(201);
   expect((await testPool().query("SELECT gateway_id FROM asset_telemetry_sources WHERE asset_id=$1 AND provider='gateway'", [assetId])).rows[0].gateway_id).toBe(replacement.body.id);
+});
+
+it("keeps simulator and gateway alarm debounce and clearing independent", async () => {
+  const created = await call(equipment.POST, {
+    method: "POST", cookie: actors.admin.cookie,
+    body: { assetTag: "GW-ALARMS", name: "Separate alarm sources", customerSite: "Test plant" },
+  });
+  const assetId = String(created.body.id);
+  const context = { params: Promise.resolve({ id: assetId }) };
+  const initial = await call((request) => telemetry.GET(request, context), { cookie: actors.admin.cookie });
+  const tags = initial.body.tags as Array<{ id: string; tagName: string }>;
+  const temperature = tags.find((tag) => tag.tagName === "temperature_c")!;
+  const machineState = tags.find((tag) => tag.tagName === "machine_state")!;
+  for (const body of [
+    { name: "Source fault", tagId: machineState.id, condition: "equals", threshold: "fault", severity: "high" },
+    { name: "Source temperature", tagId: temperature.id, condition: "above", threshold: "40", severity: "high", debounceSamples: 2 },
+  ]) {
+    expect((await call((request) => alarms.POST(request, context), { method: "POST", cookie: actors.admin.cookie, body })).status).toBe(201);
+  }
+  const simulateMode = (mode: string) => call(simulate.POST, {
+    method: "POST", cookie: actors.operator.cookie, body: { assetId, mode },
+  });
+  expect((await simulateMode("fault")).status).toBe(200);
+  const keys = generateKeyPairSync("ed25519");
+  const registered = await call(gateways.POST, {
+    method: "POST", cookie: actors.admin.cookie,
+    body: {
+      name: "Independent source gateway", publicKey: publicPem(keys.publicKey),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(), tagIds: [temperature.id],
+    },
+  });
+  expect(registered.status).toBe(201);
+  const gatewayId = String(registered.body.id);
+  const send = async (sequence: number, offset: number) => {
+    const raw = JSON.stringify({
+      sequence, assetId, connected: true, capturedAt: new Date().toISOString(),
+      readings: [{ tagName: "temperature_c", value: 60, quality: "good", observedAt: new Date(Date.now() - offset).toISOString() }],
+    });
+    return call(ingest.POST, { method: "POST", rawBody: raw, headers: signedHeaders(gatewayId, keys.privateKey, raw) });
+  };
+  expect((await send(1, 2000)).status).toBe(200);
+  let list = await call((request) => alarms.GET(request, context), { cookie: actors.admin.cookie });
+  expect(list.body.alarms).toHaveLength(1);
+  expect(list.body.alarms[0]).toMatchObject({ name: "Source fault", provider: "simulated", clearedAt: null });
+  expect((await simulateMode("stopped")).status).toBe(200);
+  list = await call((request) => alarms.GET(request, context), { cookie: actors.admin.cookie });
+  expect(list.body.alarms.find((item: { name: string }) => item.name === "Source fault").clearedAt).toBeTruthy();
+  expect(list.body.alarms.find((item: { name: string }) => item.name === "Source temperature")).toMatchObject({
+    provider: "simulated", clearedAt: null,
+  });
+  expect((await send(2, 1000)).status).toBe(200);
+  list = await call((request) => alarms.GET(request, context), { cookie: actors.admin.cookie });
+  expect(list.body.alarms.filter((item: { name: string }) => item.name === "Source temperature")
+    .map((item: { provider: string }) => item.provider).sort()).toEqual(["gateway", "simulated"]);
 });

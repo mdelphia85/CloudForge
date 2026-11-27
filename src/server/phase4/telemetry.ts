@@ -179,6 +179,7 @@ export async function ingestTelemetry(
   error: string,
   capturedAt = new Date(),
   forceOutOfOrder = false,
+  faulted = false,
 ) {
   const tagByName = new Map(tags.map((tag) => [tag.tag_name, tag]));
   const tagNames = new Set<string>();
@@ -244,13 +245,7 @@ export async function ingestTelemetry(
     );
     if (normalized.quality === "good" && orderingState === "ordered" &&
         telemetryFreshness(reading.observedAt, now) === "fresh") {
-      const realSource = actor.user && await client.query(
-        "SELECT 1 FROM asset_telemetry_sources WHERE asset_id=$1 AND provider='gateway' AND enabled",
-        [assetId],
-      );
-      if (!realSource || !realSource.rowCount) {
-        await evaluateAlarms(client, assetId, sourceId, tag.id, normalized.value, reading.observedAt, actor);
-      }
+      await evaluateAlarms(client, assetId, sourceId, tag.id, normalized.value, reading.observedAt, actor);
     }
     accepted += 1;
   }
@@ -258,7 +253,7 @@ export async function ingestTelemetry(
     "UPDATE asset_telemetry_sources SET connection_state=$2,last_seen_at=CASE WHEN $3 THEN $6 ELSE last_seen_at END, " +
       "last_error=$4,updated_by=$5,updated_at=now(),last_status_at=$6 " +
       "WHERE id=$1 AND (last_status_at IS NULL OR last_status_at <= $6)",
-    [sourceId,connected ? "connected" : "disconnected",connected,error,actor.user?.id ?? null,capturedAt],
+    [sourceId,connected ? "connected" : faulted ? "faulted" : "disconnected",connected,error,actor.user?.id ?? null,capturedAt],
   );
   const rolledUp = await rollupExpiredSamples(client);
   if (actor.user) {
@@ -315,8 +310,12 @@ function connectionStatus(
   state: string | null,
   lastSeenAt: Date | string | null,
   now: Date,
+  lastStatusAt: Date | string | null,
 ): "connected" | "disconnected" | "faulted" {
-  if (state === "faulted") return "faulted";
+  if (state === "faulted") {
+    const statusTime = lastStatusAt ? new Date(lastStatusAt).getTime() : NaN;
+    return now.getTime() - statusTime <= DISCONNECTED_AFTER_SECONDS * 1000 ? "faulted" : "disconnected";
+  }
   if (state !== "connected" || !lastSeenAt) return "disconnected";
   const seen = lastSeenAt instanceof Date ? lastSeenAt : new Date(lastSeenAt);
   return now.getTime() - seen.getTime() <= DISCONNECTED_AFTER_SECONDS * 1000 ? "connected" : "disconnected";
@@ -328,10 +327,10 @@ export async function getTelemetryStatus(assetId: string, user: AuthenticatedUse
   }
   return inTransaction(async (client) => {
     await requireAssetAccess(client,assetId,user);
-    const sources = await client.query<{ id: string; provider: string; connection_state: string; last_seen_at: Date | null; last_error: string }>(
+    const sources = await client.query<{ id: string; provider: string; connection_state: string; last_seen_at: Date | null; last_status_at: Date | null; last_error: string }>(
       "SELECT s.id,s.provider,CASE WHEN s.provider='gateway' AND " +
       "(NOT g.enabled OR g.revoked_at IS NOT NULL OR g.expires_at<=now()) THEN 'disconnected' ELSE s.connection_state END AS connection_state, " +
-      "s.last_seen_at,s.last_error FROM asset_telemetry_sources s LEFT JOIN industrial_gateways g ON g.id=s.gateway_id " +
+      "s.last_seen_at,s.last_status_at,s.last_error FROM asset_telemetry_sources s LEFT JOIN industrial_gateways g ON g.id=s.gateway_id " +
       "WHERE s.asset_id=$1 ORDER BY (s.provider='gateway') DESC",
       [assetId],
     );
@@ -357,7 +356,7 @@ export async function getTelemetryStatus(assetId: string, user: AuthenticatedUse
       ),
     ]);
     const now = new Date();
-    const connection = connectionStatus(sourceRow?.connection_state ?? null,sourceRow?.last_seen_at ?? null,now);
+    const connection = connectionStatus(sourceRow?.connection_state ?? null,sourceRow?.last_seen_at ?? null,now,sourceRow?.last_status_at ?? null);
     const currentTags = tags.rows.map((tag) => ({
       ...tag,
       freshness: telemetryFreshness(tag.observedAt ?? null,now),

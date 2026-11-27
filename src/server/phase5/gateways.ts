@@ -68,7 +68,7 @@ export async function registerGateway(body: Record<string, unknown>, user: Authe
     );
     const gatewayId = gateway.rows[0].id;
     for (const assetId of new Set(tags.rows.map((tag) => tag.asset_id))) {
-      const source = await client.query(
+      const source = await client.query<{ id: string }>(
         "INSERT INTO asset_telemetry_sources(asset_id,provider,gateway_id,updated_by) VALUES($1,'gateway',$2,$3) " +
         "ON CONFLICT(asset_id,provider) DO UPDATE SET gateway_id=EXCLUDED.gateway_id,connection_state='disconnected', " +
         "last_seen_at=NULL,last_status_at=now(),updated_by=EXCLUDED.updated_by,updated_at=now() " +
@@ -77,7 +77,7 @@ export async function registerGateway(body: Record<string, unknown>, user: Authe
         [assetId,gatewayId,user.id],
       );
       if (!source.rowCount) throw new HttpError(409, "GATEWAY_SOURCE_EXISTS", "Equipment already has a gateway source.");
-      await client.query("UPDATE equipment_alarm_rules SET consecutive_matches=0 WHERE asset_id=$1", [assetId]);
+      await client.query("DELETE FROM equipment_alarm_rule_source_state WHERE source_id=$1", [source.rows[0].id]);
     }
     await client.query(
       "INSERT INTO gateway_allowed_tags(gateway_id,tag_id) SELECT $1,unnest($2::uuid[])",
@@ -214,6 +214,9 @@ export async function ingestGateway(request: Request) {
         (body.connected && body.readings.length === 0) || (!body.connected && body.readings.length !== 0)) {
       throw new HttpError(400, "INVALID_TELEMETRY", "Connected batches require readings; disconnected batches must be empty.");
     }
+    if (body.diagnostic !== undefined && (body.connected || body.diagnostic !== "invalid_reading")) {
+      throw new HttpError(400, "INVALID_TELEMETRY", "Gateway diagnostic is invalid.");
+    }
     const source = await client.query<{ id: string }>(
       "SELECT s.id FROM asset_telemetry_sources s JOIN engineering_assets a ON a.id=s.asset_id " +
       "WHERE s.asset_id=$1 AND s.gateway_id=$2 AND s.enabled AND a.status<>'retired' FOR UPDATE OF s",
@@ -248,8 +251,10 @@ export async function ingestGateway(request: Request) {
     });
     const result = await ingestTelemetry(
       client,assetId,source.rows[0].id,{ gatewayId },allowed.rows,readings,body.connected,
-      body.connected ? "" : "Gateway reported an OPC UA disconnection.",
-      capturedAt,sequence < Number(gateway.highest_sequence),
+      body.connected ? "" : body.diagnostic === "invalid_reading"
+        ? "OPC UA returned an invalid value or timestamp; measurements are not live."
+        : "Gateway reported an OPC UA disconnection.",
+      capturedAt,sequence < Number(gateway.highest_sequence),body.diagnostic === "invalid_reading",
     );
     await client.query(
       "INSERT INTO gateway_telemetry_batches(gateway_id,sequence,payload_hash,asset_id,accepted,out_of_order) VALUES($1,$2,$3,$4,$5,$6)",

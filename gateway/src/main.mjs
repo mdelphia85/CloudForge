@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createPrivateKey } from "node:crypto";
 import { PersistentQueue } from "./queue.mjs";
 import { deliverOldest, deliveryUrl } from "./delivery.mjs";
-import { OpcUaReader } from "./opcua.mjs";
+import { InvalidOpcUaReadingError, OpcUaReader } from "./opcua.mjs";
 
 function interval(value, name, minimum, maximum) {
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
@@ -52,23 +52,26 @@ async function run(config, signal) {
   const assetIds = [...new Set(config.opcua.mappings.map((mapping) => mapping.assetId))];
 
   async function poll() {
-    let connected = false;
+    let state = null;
     while (!signal.aborted) {
       let readings;
       try {
         readings = await reader.read();
-        connected = true;
+        state = "connected";
       } catch (error) {
         console.error(`OPC UA polling failed: ${error.message}`);
-        if (connected) {
+        const nextState = error instanceof InvalidOpcUaReadingError ? "invalid_reading" : "disconnected";
+        if (state !== nextState || nextState === "invalid_reading") {
+          let queued = true;
           for (const assetId of assetIds) {
             try {
-              queue.enqueue(assetId, [], false);
+              queue.enqueue(assetId, [], false, undefined, nextState === "invalid_reading" ? nextState : undefined);
             } catch (queueError) {
+              queued = false;
               console.error(`Cannot queue disconnection: ${queueError.message}`);
             }
           }
-          connected = false;
+          if (queued) state = nextState;
         }
       }
       if (readings) {

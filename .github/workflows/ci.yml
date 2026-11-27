@@ -62,6 +62,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      - run: npm ci --prefix gateway
       - run: npm run test:integration
 
   build:

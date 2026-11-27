@@ -6,6 +6,8 @@ import {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export class InvalidOpcUaReadingError extends Error {}
+
 export function validateOpcUaConfig(config) {
   const endpoint = new URL(config.endpoint);
   if (endpoint.protocol !== "opc.tcp:" || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) {
@@ -103,7 +105,7 @@ export class OpcUaReader {
             typeof value !== mapping.dataType ||
             (typeof value === "number" && !Number.isFinite(value)) ||
             (typeof value === "string" && value.length > 1000)) {
-          throw new Error(`OPC UA node mapped to ${mapping.tagName} returned an invalid value or timestamp.`);
+          throw new InvalidOpcUaReadingError(`OPC UA node mapped to ${mapping.tagName} returned an invalid value or timestamp.`);
         }
         const quality = data.statusCode.isBad() ? "bad" : data.statusCode.value >= 0x40000000 ? "uncertain" : "good";
         const readings = byAsset.get(mapping.assetId) ?? [];
@@ -112,7 +114,7 @@ export class OpcUaReader {
       }
       return byAsset;
     } catch (error) {
-      await this.disconnect();
+      if (!(error instanceof InvalidOpcUaReadingError)) await this.disconnect();
       throw error;
     }
   }

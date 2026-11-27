@@ -11,7 +11,6 @@ type Rule = {
   threshold: string;
   severity: string;
   debounce_samples: number;
-  consecutive_matches: number;
   data_type: string;
 };
 export type AlarmActor = { user: AuthenticatedUser; gatewayId?: never } | { user?: never; gatewayId: string };
@@ -55,7 +54,7 @@ export async function evaluateAlarms(
   actor: AlarmActor,
 ): Promise<void> {
   const rules = await client.query<Rule>(
-    `SELECT r.id,r.condition,r.threshold,r.severity,r.debounce_samples,r.consecutive_matches,t.data_type
+    `SELECT r.id,r.condition,r.threshold,r.severity,r.debounce_samples,t.data_type
        FROM equipment_alarm_rules r JOIN asset_telemetry_tags t ON t.id=r.tag_id
       WHERE r.asset_id=$1 AND r.tag_id=$2 AND r.enabled ORDER BY r.id FOR UPDATE OF r`,
     [assetId, tagId],
@@ -67,9 +66,14 @@ export async function evaluateAlarms(
     );
     if (matches(rule, value)) {
       if (active.rowCount) continue;
-      const count = Math.min(rule.consecutive_matches + 1, rule.debounce_samples);
-      await client.query("UPDATE equipment_alarm_rules SET consecutive_matches=$2 WHERE id=$1", [rule.id, count]);
-      if (count < rule.debounce_samples) continue;
+      const state = await client.query<{ consecutive_matches: number }>(
+        `INSERT INTO equipment_alarm_rule_source_state(rule_id,source_id,consecutive_matches) VALUES($1,$2,1)
+         ON CONFLICT(rule_id,source_id) DO UPDATE SET consecutive_matches=
+           LEAST(equipment_alarm_rule_source_state.consecutive_matches+1,$3)
+         RETURNING consecutive_matches`,
+        [rule.id, sourceId, rule.debounce_samples],
+      );
+      if (state.rows[0].consecutive_matches < rule.debounce_samples) continue;
       const alarm = await client.query<{ id: string }>(
         `INSERT INTO equipment_alarms(rule_id,asset_id,source_id,severity,triggered_at,trigger_value)
          VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
@@ -77,7 +81,7 @@ export async function evaluateAlarms(
       );
       await recordAutomaticAlarm(client, actor, alarm.rows[0].id, "triggered", value, rule.id, assetId);
     } else {
-      await client.query("UPDATE equipment_alarm_rules SET consecutive_matches=0 WHERE id=$1", [rule.id]);
+      await client.query("DELETE FROM equipment_alarm_rule_source_state WHERE rule_id=$1 AND source_id=$2", [rule.id, sourceId]);
       if (!active.rowCount) continue;
       await client.query("UPDATE equipment_alarms SET cleared_at=$2,clear_value=$3 WHERE id=$1", [active.rows[0].id, observedAt, value]);
       await recordAutomaticAlarm(client, actor, active.rows[0].id, "cleared", value, rule.id, assetId);
@@ -190,6 +194,7 @@ export async function setAlarmRuleEnabled(assetId: string, ruleId: string, enabl
     }
     if (rule.rows[0].enabled !== enabled) {
       await client.query("UPDATE equipment_alarm_rules SET enabled=$2,consecutive_matches=0 WHERE id=$1", [ruleId, enabled]);
+      await client.query("DELETE FROM equipment_alarm_rule_source_state WHERE rule_id=$1", [ruleId]);
       await audit(client, user, "equipment_alarm.rule_enabled_changed", "equipment_alarm_rule", ruleId, { assetId, enabled });
     }
     return { id: ruleId, enabled };

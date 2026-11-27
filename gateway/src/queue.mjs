@@ -27,14 +27,14 @@ export class PersistentQueue {
     `);
   }
 
-  enqueue(assetId, readings, connected, capturedAt = new Date().toISOString()) {
+  enqueue(assetId, readings, connected, capturedAt = new Date().toISOString(), diagnostic) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const { next_sequence: sequence } = this.db.prepare("SELECT next_sequence FROM queue_state WHERE id=1").get();
       if (!Number.isSafeInteger(sequence) || sequence >= Number.MAX_SAFE_INTEGER) {
         throw new Error("Gateway sequence exhausted.");
       }
-      const payload = JSON.stringify({ sequence, assetId, connected, capturedAt, readings });
+      const payload = JSON.stringify({ sequence, assetId, connected, capturedAt, readings, diagnostic });
       const bytes = Buffer.byteLength(payload);
       if (bytes > 60_000) throw new Error("Telemetry entry exceeds the delivery limit.");
       const size = this.db.prepare("SELECT count(*) AS count, COALESCE(sum(bytes),0) AS bytes FROM queue").get();
