@@ -1,13 +1,8 @@
 -- Bind every session to an authenticated organization membership.
 -- This is safe while 012's single-organization guard remains in force.
 -- No additional organizations may be admitted until every data path is isolated.
-ALTER TABLE sessions
-  ADD COLUMN organization_id uuid REFERENCES organizations(id) ON DELETE RESTRICT;
-
-UPDATE sessions s
-SET organization_id = m.organization_id
-FROM organization_memberships m
-WHERE m.user_id = s.user_id;
+-- Migration 012 already added sessions.organization_id NOT NULL and backfilled
+-- the original organization. Validate that no historical session escaped.
 
 DO $$
 BEGIN
