@@ -33,6 +33,23 @@ describe("offline signed licenses", () => {
     expect(() => verifyLicense(signed, keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(), organizationId)).toThrow(LicenseConfigurationError);
   });
 
+  it("rejects licenses signed by an unrelated issuer and malformed entitlement claims", () => {
+    const unrelated = generateKeyPairSync("ed25519");
+    const unrelatedPublic = unrelated.publicKey.export({ type: "spki", format: "pem" }).toString();
+    expect(() => verifyLicense(envelope(claims), unrelatedPublic, organizationId)).toThrow(InvalidLicenseError);
+    for (const invalid of [
+      { ...claims, modules: ["inventory", "inventory"] },
+      { ...claims, modules: [] },
+      { ...claims, seatLimit: 1.5 },
+      { ...claims, seatLimit: 100001 },
+      { ...claims, licenseType: "unknown" },
+      { ...claims, issuedAt: "2026-01-03T00:00:00.000Z" },
+      { ...claims, activatedAt: "2026-01-02T00:00:00Z" },
+    ]) {
+      expect(() => verifyLicense(envelope(invalid), publicKey, organizationId)).toThrow(InvalidLicenseError);
+    }
+  });
+
   it("applies the selected 30-day expiration grace period at exact boundaries", () => {
     const verified = verifyLicense(envelope(claims), publicKey, organizationId);
     expect(licenseTimeStatus(verified, new Date("2026-01-01T23:59:59.999Z"))).toBe("not_active");
