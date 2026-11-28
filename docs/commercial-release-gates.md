@@ -45,7 +45,9 @@ tested commit, and preserve GitHub Actions run evidence.
 - [ ] Individual signed-license seat limits, module entitlements, expiry,
   renewal, suspension and offline signature validation; test negative paths
 - [ ] MFA enrollment, authenticator sign-in, code replay rejection and
-  one-time recovery codes; verify operational access is blocked without MFA
+  one-time recovery codes; verify operational access is blocked without MFA;
+  test authenticator replacement using a recovery-code-authenticated session,
+  rotation of all recovery codes and revocation of older sessions
 - [ ] File upload/download hash integrity and malware detection; verify
   all four engineering file categories and existing revisions
 - [ ] Per-item Auto Reorder off by default, one open request maximum,
