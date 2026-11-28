@@ -9,7 +9,7 @@ import {
   Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
 } from "lucide-react";
 
-type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer" };
+type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer"; mfaEnabled?:boolean };
 type ManagedUser = User & { isActive: boolean };
 type Item = {
   sku: string; name: string; category: string; location: string; bin: string;
@@ -26,7 +26,7 @@ type ReorderRequest = {
   id: string; sku: string; name: string; quantity: string; status: string;
   createdAt: string; reference: string; autoReorderEnabled: boolean;
 };
-type AuthStatus = { setupRequired: boolean; setupEnabled: boolean; user: User | null };
+type AuthStatus = { setupRequired: boolean; setupEnabled: boolean; user: User | null; mfaRequired?:boolean };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store" });
@@ -43,6 +43,11 @@ export default function InventoryWorkspace() {
   const [user, setUser] = useState<User | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupEnabled, setSetupEnabled] = useState(false);
+  const [mfaRequired,setMfaRequired] = useState(false);
+  const [mfaSetupOpen,setMfaSetupOpen] = useState(false);
+  const [mfaSecret,setMfaSecret] = useState("");
+  const [mfaSetupUrl,setMfaSetupUrl] = useState("");
+  const [mfaRecoveryCodes,setMfaRecoveryCodes] = useState<string[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [reorders, setReorders] = useState<ReorderRequest[]>([]);
   const [notice, setNotice] = useState("");
@@ -73,8 +78,9 @@ export default function InventoryWorkspace() {
       const status = await requestJson<AuthStatus>("/api/auth/status");
       setSetupRequired(status.setupRequired);
       setSetupEnabled(status.setupEnabled);
+      setMfaRequired(Boolean(status.mfaRequired));
       setUser(status.user);
-      if (status.user) await refreshItems();
+      if (status.user && (!status.mfaRequired || status.user.mfaEnabled)) await refreshItems();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to connect to CloudForge.");
     } finally {
@@ -89,8 +95,9 @@ export default function InventoryWorkspace() {
         if (!active) return;
         setSetupRequired(status.setupRequired);
         setSetupEnabled(status.setupEnabled);
+        setMfaRequired(Boolean(status.mfaRequired));
         setUser(status.user);
-        if (status.user) {
+        if (status.user && (!status.mfaRequired || status.user.mfaEnabled)) {
           const [result,queue] = await Promise.all([
             requestJson<{ items: Item[] }>("/api/inventory"),
             requestJson<{ requests: ReorderRequest[] }>("/api/inventory/reorder"),
@@ -205,6 +212,9 @@ export default function InventoryWorkspace() {
       await requestJson("/api/auth/logout", { method: "POST" });
       setUser(null);
       setItems([]);
+      setMfaSecret("");
+      setMfaRecoveryCodes([]);
+      setMfaSetupOpen(false);
       setReorders([]);
       setSelectedSku(null);
       setMovements([]);
@@ -245,6 +255,36 @@ export default function InventoryWorkspace() {
     }
   }
 
+  async function startMfaSetup(event:React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    setSaving(true);setError("");
+    try {
+      const result=await requestJson<{secret:string;otpauthUrl:string}>("/api/auth/mfa/setup",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({password:data.get("password")}),
+      });
+      setMfaSecret(result.secret);
+      setMfaSetupUrl(result.otpauthUrl);
+    }catch(e){setError(e instanceof Error?e.message:"Could not start authenticator setup.");}
+    finally{setSaving(false);}
+  }
+  async function finishMfaSetup(event:React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    setSaving(true);setError("");
+    try {
+      const result=await requestJson<{recoveryCodes:string[]}>("/api/auth/mfa/verify",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({code:data.get("code")}),
+      });
+      setMfaSecret("");
+      setMfaSetupUrl("");
+      setMfaRecoveryCodes(result.recoveryCodes);
+    }catch(e){setError(e instanceof Error?e.message:"Authenticator code could not be verified.");}
+    finally{setSaving(false);}
+  }
+
   if (loading) {
     return <main className="auth-screen"><div className="auth-card"><span className="brand-mark"><Boxes size={18} /></span><p className="eyebrow">CloudForge</p><h1>Connecting to your workspace</h1><p className="subtitle">Verifying the local session and inventory service.</p></div></main>;
   }
@@ -273,6 +313,9 @@ export default function InventoryWorkspace() {
               {bootstrap && <label>Your name<input required name="displayName" minLength={2} maxLength={120} autoComplete="name" /></label>}
               <label>Email<input required name="email" type="email" maxLength={254} autoComplete="username" /></label>
               <label>Password<input required name="password" type="password" maxLength={256} autoComplete={bootstrap ? "new-password" : "current-password"} /></label>
+              {!bootstrap && <label>Authenticator or recovery code (when MFA is enabled)
+                <input name="mfaCode" type="text" autoComplete="one-time-code" maxLength={128}
+                  placeholder="6-digit code or recovery code" /></label>}
               {bootstrap && <small className="password-hint">At least 14 characters, including uppercase, lowercase, a number, and a symbol.</small>}
               <button className="primary-button auth-submit" disabled={saving}>{saving ? "Please wait…" : bootstrap ? "Create administrator" : "Sign in"}</button>
             </form>
@@ -282,6 +325,42 @@ export default function InventoryWorkspace() {
         </section>
       </main>
     );
+  }
+
+  if (user && !user.mfaEnabled && (mfaRequired || mfaSetupOpen)) {
+    return <main className="auth-screen"><section className="auth-card" style={{maxWidth:580}}>
+      <p className="eyebrow">CloudForge account security</p>
+      <h1>Set up multi-factor authentication</h1>
+      <p className="subtitle">Use an authenticator app to protect your organization. Recovery codes are shown only once.</p>
+      {error&&<p role="alert" className="form-error">{error}</p>}
+      {mfaRecoveryCodes.length>0 ? <>
+        <h2>Save your one-time recovery codes</h2>
+        <p className="subtitle">Store these offline in a secure location. Each code can be used only once. Your previous sessions have been revoked.</p>
+        <textarea readOnly value={mfaRecoveryCodes.join("\n")} rows={10} style={{width:"100%"}} aria-label="One-time recovery codes"/>
+        <button className="primary-button" type="button" onClick={()=>{
+          setMfaRecoveryCodes([]);setUser(null);setMfaSetupOpen(false);setError("");
+        }}>I saved my codes — sign in again</button>
+      </> : mfaSecret ? <>
+        <p>Enter this key into an authenticator app:</p>
+        <code style={{wordBreak:"break-all",display:"block",padding:12}}>{mfaSecret}</code>
+        <p className="subtitle">Or open this URI in a compatible authenticator app:</p>
+        <input readOnly value={mfaSetupUrl} aria-label="Authenticator setup URI" onFocus={event=>event.currentTarget.select()}/>
+        <form onSubmit={event=>void finishMfaSetup(event)}>
+          <label>Six-digit code from your authenticator
+            <input required name="code" type="text" inputMode="numeric"
+              autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6}/>
+          </label>
+          <button disabled={saving} className="primary-button" type="submit">Verify and enable MFA</button>
+        </form>
+      </> : <form onSubmit={event=>void startMfaSetup(event)}>
+        <label>Confirm your password
+          <input name="password" type="password" autoComplete="current-password" required maxLength={256}/>
+        </label>
+        <button disabled={saving} className="primary-button" type="submit">Start authenticator setup</button>
+      </form>}
+      {!mfaRequired && mfaRecoveryCodes.length===0 && <button type="button" className="secondary-button"
+        onClick={()=>{setMfaSetupOpen(false);setMfaSecret("");setError("");}}>Cancel</button>}
+    </section></main>;
   }
 
   return (
@@ -317,6 +396,8 @@ export default function InventoryWorkspace() {
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => { setError(""); setModal("user"); }}><Users size={15} /> Add user</button>}
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => void loadAccounts()}><Users size={15} /> Manage accounts</button>}
             {user.role === "admin" && <Link href="/organization/members" className="secondary-button compact-button"><Users size={15} /> Organization Members</Link>}
+            {!user.mfaEnabled && <button className="secondary-button compact-button"
+              onClick={()=>setMfaSetupOpen(true)}><ShieldCheck size={15}/> Enable MFA</button>}
             <button className="icon-button" aria-label="Refresh inventory" onClick={() => void refreshItems().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Refresh failed."))}><RefreshCw size={17} /></button>
             <button className="icon-button mobile-signout" aria-label="Sign out" onClick={() => void signOut()} disabled={saving}><LogOut size={15} /></button>
           </div>

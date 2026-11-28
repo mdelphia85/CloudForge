@@ -181,6 +181,7 @@ describe("migrations", () => {
       "017_organization_business_keys.sql",
       "018_explicit_memberships_and_invitations.sql",
       "019_inventory_auto_reorder.sql",
+      "020_totp_mfa_recovery.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -209,7 +210,7 @@ describe("migrations", () => {
       "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",
       "project_milestones", "project_resources", "project_task_dependencies", "project_tasks",
       "projects", "purchase_order_lines", "purchase_orders", "purchase_receipts", "purchase_requests",
-      "schema_migrations", "sessions", "suppliers", "users",
+      "schema_migrations", "sessions", "suppliers", "user_mfa_recovery_codes", "users",
     ]);
     const indexes = await testPool().query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
     const names = indexes.rows.map((r) => r.indexname);
