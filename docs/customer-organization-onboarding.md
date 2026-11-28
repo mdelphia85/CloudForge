@@ -66,6 +66,15 @@ the link privately. The customer enrolls or verifies their account, accepts
 the invitation and signs in. The customer administrator uses the MFA setup
 screen to register a real authenticator and save the one-time recovery codes.
 
+If the user loses their authenticator but still has an unused recovery code,
+they can sign in with that code and their password. The resulting session
+offers **Replace lost authenticator**. It requires password re-verification,
+a valid code from the newly enrolled authenticator and saving the regenerated
+recovery-code set. Previous device credentials, old recovery codes, and all
+other sessions are revoked. Without either an authenticator or recovery code,
+the account requires documented, independently verified administrative
+recovery; no automatic bypass exists.
+
 The customer admin may then manage its own licensed members. Test the seat
 limit and verify unrelated organizations' members and invitations are absent.
 A suspended organization must not be able to access operational records.
