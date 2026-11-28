@@ -57,9 +57,13 @@ async function handlePOST(request: Request) {
         [email, displayName, passwordHash, role],
       );
       await client.query(
-        `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details)
-         VALUES ($1, 'user.created', 'user', $2, $3)`,
-        [actor.id, result.rows[0].id, JSON.stringify({ email, role })],
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,$3)",
+        [actor.organizationId,result.rows[0].id,role],
+      );
+      await client.query(
+        `INSERT INTO audit_events (actor_user_id,organization_id,action, entity_type, entity_id, details)
+         VALUES ($1,$2,'user.created', 'user', $3, $4)`,
+        [actor.id,actor.organizationId,result.rows[0].id, JSON.stringify({ email, role })],
       );
       return result.rows[0];
     });
