@@ -10,17 +10,17 @@ const TAGS = [
   ["production_count", "Production count", "number", "metric", "cycles", 0, null],
 ] as const;
 
-export async function initializeSimulatedTelemetry(client: PoolClient, assetId: string, actorId: string): Promise<void> {
+export async function initializeSimulatedTelemetry(client: PoolClient, assetId: string, actorId: string, organizationId: string): Promise<void> {
   await client.query(
-    "INSERT INTO asset_telemetry_sources(asset_id,provider,connection_state,updated_by) " +
-      "VALUES($1,'simulated','disconnected',$2)",
-    [assetId,actorId],
+    "INSERT INTO asset_telemetry_sources(organization_id,asset_id,provider,connection_state,updated_by) " +
+      "VALUES($1,$2,'simulated','disconnected',$3)",
+    [organizationId,assetId,actorId],
   );
   for (const tag of TAGS) {
     await client.query(
-      "INSERT INTO asset_telemetry_tags(asset_id,tag_name,label,data_type,semantic_type,unit,minimum,maximum) " +
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
-      [assetId,...tag],
+      "INSERT INTO asset_telemetry_tags(organization_id,asset_id,tag_name,label,data_type,semantic_type,unit,minimum,maximum) " +
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [organizationId,assetId,...tag],
     );
   }
 }

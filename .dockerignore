@@ -7,3 +7,9 @@ node_modules
 coverage
 npm-debug.log*
 tsconfig.tsbuildinfo
+
+# Never bake deployment credentials or signed customer data into the image
+secrets/
+*.private.pem
+signed-license*.json
+docker-compose.override.yml

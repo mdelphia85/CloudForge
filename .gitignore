@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Customer deployment credentials and signed license artifacts
+/secrets/
+/signed-license*.json
+/license-request*.json
+/docker-compose.override.yml

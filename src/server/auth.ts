@@ -9,6 +9,7 @@ export type AuthenticatedUser = {
   email: string;
   displayName: string;
   role: UserRole;
+  organizationId: string;
 };
 
 const SESSION_COOKIE = "cloudforge_session";
@@ -54,10 +55,22 @@ export async function createSession(userId: string, token: string, action = "aut
     if (!user.rows[0]?.is_active || (expectedEpoch !== undefined && user.rows[0].session_epoch !== expectedEpoch)) {
       throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
     }
+
+    const membership = await client.query<{ organization_id: string }>(
+      `SELECT m.organization_id FROM organization_memberships m
+         JOIN organizations o ON o.id=m.organization_id
+        WHERE m.user_id=$1 AND o.status='active'
+        ORDER BY m.created_at, m.organization_id
+        LIMIT 1 FOR SHARE OF m, o`,
+      [userId],
+    );
+    if (!membership.rowCount) {
+      throw new HttpError(403, "NO_ACTIVE_ORGANIZATION", "No active organization membership is available.");
+    }
     await client.query(
-      `INSERT INTO sessions (token_hash, user_id, expires_at)
-       VALUES ($1, $2, now() + ($3 * interval '1 second'))`,
-      [hashToken(token), userId, SESSION_TTL_SECONDS],
+      `INSERT INTO sessions (token_hash, user_id, organization_id, expires_at)
+       VALUES ($1, $2, $3, now() + ($4 * interval '1 second'))`,
+      [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS],
     );
     await client.query(
       `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id)
@@ -89,16 +102,76 @@ export async function getAuthenticatedUser(request: Request): Promise<Authentica
   if (!token || token.length > 128) return null;
 
   const result = await getPool().query<AuthenticatedUser>(
-    `SELECT u.id, u.email, u.display_name AS "displayName", u.role
+    `SELECT u.id, u.email, u.display_name AS "displayName",
+            m.role, m.organization_id AS "organizationId"
        FROM sessions s
        JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = $1 AND s.expires_at > now() AND u.is_active = true`,
+       JOIN organization_memberships m ON m.user_id = u.id AND m.organization_id = s.organization_id
+       JOIN organizations o ON o.id = s.organization_id
+      WHERE s.token_hash = $1 AND s.expires_at > now()
+        AND u.is_active = true AND o.status = 'active'`,
     [hashToken(token)],
   );
   return result.rows[0] ?? null;
 }
 
 export async function requireUser(request: Request): Promise<AuthenticatedUser> {
+  const user = await getAuthenticatedUser(request);
+  if (!user) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
+  return user;
+}
+
+
+export async function listAccessibleOrganizations(userId: string): Promise<{
+  id: string; name: string; identifier: string; role: UserRole;
+}[]> {
+  const result = await getPool().query<{
+    id: string; name: string; identifier: string; role: UserRole;
+  }>(
+    `SELECT o.id, o.name, o.identifier, m.role
+       FROM organization_memberships m
+       JOIN organizations o ON o.id=m.organization_id
+       JOIN users u ON u.id=m.user_id
+      WHERE m.user_id=$1 AND u.is_active AND o.status='active'
+      ORDER BY o.name, o.id`,
+    [userId],
+  );
+  return result.rows;
+}
+
+export async function switchSessionOrganization(request: Request, organizationId: string): Promise<AuthenticatedUser> {
+  const token = readCookie(request, SESSION_COOKIE);
+  if (!token) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
+  const tokenHash = hashToken(token);
+  await inTransaction(async (client) => {
+    const session = await client.query<{ user_id: string; organization_id: string }>(
+      `SELECT s.user_id, s.organization_id FROM sessions s
+         JOIN users u ON u.id=s.user_id
+        WHERE s.token_hash=$1 AND s.expires_at>now() AND u.is_active
+        FOR UPDATE OF s`,
+      [tokenHash],
+    );
+    if (!session.rowCount) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
+    const userId = session.rows[0].user_id;
+    const membership = await client.query(
+      `SELECT 1 FROM organization_memberships m
+         JOIN organizations o ON o.id=m.organization_id
+        WHERE m.user_id=$1 AND m.organization_id=$2 AND o.status='active'
+        FOR SHARE OF m, o`,
+      [userId, organizationId],
+    );
+    if (!membership.rowCount) {
+      throw new HttpError(403, "ORGANIZATION_ACCESS_DENIED", "You are not an active member of this organization.");
+    }
+    if (session.rows[0].organization_id !== organizationId) {
+      await client.query("UPDATE sessions SET organization_id=$2 WHERE token_hash=$1", [tokenHash, organizationId]);
+      await client.query(
+        `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details)
+         VALUES ($1, 'auth.organization_switched', 'organization', $2, $3)`,
+        [userId, organizationId, JSON.stringify({ from: session.rows[0].organization_id, to: organizationId })],
+      );
+    }
+  });
   const user = await getAuthenticatedUser(request);
   if (!user) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
   return user;

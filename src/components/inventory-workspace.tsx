@@ -1,5 +1,7 @@
 "use client";
 
+import OrganizationSwitcher from "@/components/organization-switcher";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive, Boxes, ChevronDown, CircleAlert, ClipboardList, FileClock, LogOut,
@@ -251,6 +253,7 @@ export default function InventoryWorkspace() {
         <header className="topbar">
           <div className="breadcrumbs"><span>Operations</span><span>/</span><strong>Inventory</strong></div>
           <div className="topbar-actions">
+            <OrganizationSwitcher />
             <span className="sync-status"><i />Connected</span>
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => { setError(""); setModal("user"); }}><Users size={15} /> Add user</button>}
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => void loadAccounts()}><Users size={15} /> Manage accounts</button>}
