@@ -5,8 +5,8 @@ import { createInventoryItem, listInventory, parseItemInput } from "@/server/inv
 
 export async function GET(request: Request) {
   try {
-    await requireUser(request);
-    return NextResponse.json({ items: await listInventory() });
+    const user=await requireUser(request);
+    return NextResponse.json({ items: await listInventory(user) });
   } catch (error) {
     return errorResponse(error);
   }
