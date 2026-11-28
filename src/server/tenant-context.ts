@@ -64,13 +64,13 @@ export async function enforceRouteLicense(organizationId: string, requestUrl: st
     throw new HttpError(403, "UNSCOPED_AGGREGATE",
       "This aggregate requires tenant-safe entitlement filtering before shared SaaS use.");
   }
-  const module = moduleForPath(path);
-  if (!module) {
+  const licensedModule = moduleForPath(path);
+  if (!licensedModule) {
     if (path.startsWith("/api/platform/") || path.startsWith("/api/users")) return;
     throw new HttpError(403, "UNCLASSIFIED_OPERATION",
       "The requested operation has not been approved for multi-organization licensing.");
   }
-  await inTransaction(client => requireLicensedModule(client, organizationId, module));
+  await inTransaction(client => requireLicensedModule(client, organizationId, licensedModule));
 }
 
 export function withOrganizationRoute<Args extends unknown[]>(
