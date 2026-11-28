@@ -124,7 +124,7 @@ export async function updateGateway(id: string, body: Record<string, unknown>, u
 }
 
 type GatewayRow = {
-  id: string; public_key: string; enabled: boolean; revoked_at: Date | null;
+  id: string; organization_id: string; public_key: string; enabled: boolean; revoked_at: Date | null;
   valid: boolean; highest_sequence: string;
 };
 
@@ -185,11 +185,14 @@ export async function ingestGateway(request: Request) {
   const hash = createHash("sha256").update(raw).digest("hex");
   return inTransaction(async (client: PoolClient) => {
     const rows = await client.query<GatewayRow>(
-      "SELECT id,public_key,enabled,revoked_at,expires_at>now() AS valid,highest_sequence::text FROM industrial_gateways WHERE id=$1 FOR UPDATE",
+      "SELECT id,organization_id,public_key,enabled,revoked_at,expires_at>now() AS valid,highest_sequence::text FROM industrial_gateways WHERE id=$1 FOR UPDATE",
       [gatewayId],
     );
     const gateway = rows.rows[0];
     authenticate(gateway,timestamp,signature,hash);
+    // The signed gateway credential, NOT the request's claimed asset, chooses
+    // the tenant. Set LOCAL only after verification and only in this transaction.
+    await client.query("SELECT set_config('cloudforge.organization_id',$1,true)", [gateway!.organization_id]);
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { throw new HttpError(400, "INVALID_JSON", "Telemetry body must be JSON."); }
     const body = record(parsed);
