@@ -116,3 +116,32 @@ it("database foreign keys reject cross-company inventory and engineering referen
     [originalOrg,itemId,actors.admin.id],
   )).rejects.toMatchObject({code:"23503"});
 });
+
+it("allows the same business SKU and project code in separate organizations, but not duplicates within one",async()=>{
+  const originalOrg=(await testPool().query<{id:string}>(
+    "SELECT id FROM organizations WHERE identifier='existing-installation'",
+  )).rows[0].id;
+  const item=await testPool().query<{id:string}>(
+    `INSERT INTO inventory_items(organization_id,sku,name,category,unit,reorder_point,created_by)
+      VALUES($1,$2,'Duplicate identifier allowed across organizations','Electrical','ea',0,$3)
+      RETURNING id`,
+    [originalOrg,otherSku,actors.admin.id],
+  );
+  expect(item.rows).toHaveLength(1);
+  await expect(testPool().query(
+    `INSERT INTO inventory_items(organization_id,sku,name,category,unit,reorder_point,created_by)
+      VALUES($1,$2,'Duplicate not allowed within org','Electrical','ea',0,$3)`,
+    [originalOrg,otherSku,actors.admin.id],
+  )).rejects.toMatchObject({code:"23505"});
+  const project=await testPool().query<{id:string}>(
+    `INSERT INTO projects(organization_id,code,name,customer,created_by)
+      VALUES($1,'ORG-B-SECRET','Same project code independently','Different customer',$2) RETURNING id`,
+    [originalOrg,actors.admin.id],
+  );
+  expect(project.rows).toHaveLength(1);
+  await expect(testPool().query(
+    `INSERT INTO projects(organization_id,code,name,customer,created_by)
+      VALUES($1,'ORG-B-SECRET','Colliding same-tenant code','Different customer',$2)`,
+    [originalOrg,actors.admin.id],
+  )).rejects.toMatchObject({code:"23505"});
+});
