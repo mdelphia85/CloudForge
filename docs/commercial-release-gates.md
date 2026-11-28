@@ -59,6 +59,10 @@ tested commit, and preserve GitHub Actions run evidence.
 
 GitHub Actions run [46123748884](https://github.com/mdelphia85/CloudForge/actions/runs/46123748884) returned five successful jobs on the tested source SHA `7e12cddb96bff8f8be8fd9f0118a2da30730d11a` after a rerun request: dependency audit, production build, PostgreSQL integration, lint/typecheck/unit tests, and on-premises container/database-role smoke test. This evidence applies to that source SHA only; repeat CI on the final release SHA. No staging or external acceptance is implied.
 
+### Additional verified evidence — CI #200
+
+[Run 46173939399](https://github.com/mdelphia85/CloudForge/actions/runs/46173939399), source SHA `0d241da9c5e585c224905e05d34e6a4f3cdddc76`: all five jobs passed, including 176 integration tests across 27 files. The on-premises job verified standard and age-encrypted recovery with SHA-256 and byte-length assertions, then restarted the existing installation using preloaded images, no build or pull, and a Docker internal network. The application readiness endpoint passed. This is an isolated-network restart test, not physical air-gap acceptance; offline licensing, scanner signature maintenance and fresh installation from offline media remain separate gates.
+
 ## Mandatory human and environment acceptance
 
 These items cannot be asserted merely from an automated repository test:
