@@ -59,9 +59,11 @@ export async function scanEngineeringFile(bytes:Uint8Array):Promise<void> {
     socket.setTimeout(30_000);
     let complete=false;
     let output="";
+    const deadline=setTimeout(()=>terminate(new Error("ClamAV scan deadline exceeded")),30_000);
     const terminate=(error?:Error,response?:string)=>{
       if(complete)return;
       complete=true;
+      clearTimeout(deadline);
       socket.destroy();
       if(error)reject(error);
       else resolve(response ?? "");
@@ -127,9 +129,11 @@ export async function engineeringScannerReady():Promise<boolean> {
   return new Promise<boolean>(resolve=>{
     const socket=createConnection({host,port});
     let finished=false,output="";
+    const deadline=setTimeout(()=>done(false),2_000);
     const done=(value:boolean)=>{
       if(finished)return;
       finished=true;
+      clearTimeout(deadline);
       socket.destroy();
       resolve(value);
     };
