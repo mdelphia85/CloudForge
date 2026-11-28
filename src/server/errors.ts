@@ -25,7 +25,30 @@ export function errorResponse(error: unknown): NextResponse {
 
 export function requireSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin) {
+  if (!origin) {
+    throw new HttpError(403, "INVALID_ORIGIN", "Request origin was rejected.");
+  }
+
+  const configured = process.env.APP_ORIGIN;
+  let expected: string;
+  if (configured !== undefined) {
+    let url: URL;
+    try {
+      url = new URL(configured);
+    } catch {
+      throw new HttpError(503, "INVALID_ORIGIN_CONFIGURATION", "APP_ORIGIN must be a canonical HTTP or HTTPS origin.");
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || configured !== url.origin) {
+      throw new HttpError(503, "INVALID_ORIGIN_CONFIGURATION", "APP_ORIGIN must be a canonical HTTP or HTTPS origin.");
+    }
+    expected = url.origin;
+  } else {
+    if (process.env.NODE_ENV === "production") {
+      throw new HttpError(503, "INVALID_ORIGIN_CONFIGURATION", "APP_ORIGIN must be configured in production.");
+    }
+    expected = new URL(request.url).origin;
+  }
+  if (origin !== expected) {
     throw new HttpError(403, "INVALID_ORIGIN", "Request origin was rejected.");
   }
 }
