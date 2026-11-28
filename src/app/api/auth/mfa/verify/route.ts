@@ -11,7 +11,7 @@ export async function POST(request:Request) {
     if(typeof body.code!=="string"||!/^\d{6}$/.test(body.code)) {
       throw new HttpError(400,"INVALID_MFA_CODE","Enter a six-digit code from your authenticator.");
     }
-    const result=await completeMfaEnrollment(user.id,user.organizationId,body.code);
+    const result=await completeMfaEnrollment(user.id,user.organizationId,body.code,user.mfaRecoveryAuthenticated);
     return NextResponse.json({...result,next:"Save your recovery codes and sign in again with MFA."},{
       headers:{"Cache-Control":"no-store","Pragma":"no-cache"},
     });
