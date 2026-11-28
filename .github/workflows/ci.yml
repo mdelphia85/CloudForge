@@ -107,6 +107,7 @@ jobs:
           openssl rand -hex 32 > secrets/postgres-admin-password.txt
           openssl rand -hex 32 > secrets/postgres-app-password.txt
           openssl rand -hex 32 > secrets/bootstrap-admin-token.txt
+          openssl rand -hex 32 > secrets/mfa-encryption-key.txt
           openssl genpkey -algorithm Ed25519 -out /tmp/cloudforge-ci-private.pem
           openssl pkey -in /tmp/cloudforge-ci-private.pem -pubout -out secrets/license-public-key.pem
           rm -f /tmp/cloudforge-ci-private.pem
