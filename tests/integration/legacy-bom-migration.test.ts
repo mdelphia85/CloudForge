@@ -209,7 +209,7 @@ describe("Phase 2 BOM migration provenance", () => {
       // business fields and separately assert the safe default-off policy.
       const newInventoryColumns = table === "inventory_items"
         ? " - 'auto_reorder_enabled' - 'auto_reorder_quantity'"
-        : table === "sessions" ? " - 'mfa_verified'" : "";
+        : table === "sessions" ? " - 'mfa_verified' - 'mfa_recovery_authenticated'" : "";
       const rows = await testPool().query(
         `SELECT to_jsonb(t) - 'organization_id'${newInventoryColumns} AS data, organization_id FROM ${table} t ORDER BY 1`,
       );
