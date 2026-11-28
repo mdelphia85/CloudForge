@@ -73,9 +73,9 @@ export async function createSession(userId: string, token: string, action = "aut
       [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS],
     );
     await client.query(
-      `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id)
-       VALUES ($1, $2, 'user', $1)`,
-      [userId, action],
+      `INSERT INTO audit_events (actor_user_id, organization_id, action, entity_type, entity_id)
+       VALUES ($1, $3, $2, 'user', $1)`,
+      [userId, action, membership.rows[0].organization_id],
     );
     return {organizationId:membership.rows[0].organization_id,role:membership.rows[0].role};
   });
@@ -89,9 +89,9 @@ export async function deleteSession(request: Request): Promise<void> {
       await client.query("DELETE FROM sessions WHERE token_hash = $1", [hashToken(token)]);
       if (user) {
         await client.query(
-          `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id)
-           VALUES ($1, 'auth.logout', 'user', $1)`,
-          [user.id],
+          `INSERT INTO audit_events (actor_user_id, organization_id, action, entity_type, entity_id)
+           VALUES ($1, $2, 'auth.logout', 'user', $1)`,
+          [user.id, user.organizationId],
         );
       }
     });
