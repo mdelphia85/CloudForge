@@ -5,6 +5,7 @@ import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import type { AuthenticatedUser } from "@/server/auth";
 import { deductAvailableStock } from "@/server/inventory-allocation";
+import { evaluateAutoReorder } from "@/server/auto-reorder";
 
 export type InventoryItem = {
   sku: string;
@@ -14,6 +15,9 @@ export type InventoryItem = {
   bin: string;
   onHand: string;
   reorder: string;
+  totalOnHand: string;
+  autoReorderEnabled: boolean;
+  autoReorderQuantity: string;
   unit: string;
   state: "Healthy" | "Low stock" | "Out of stock";
   updated: string;
@@ -115,6 +119,10 @@ export async function listInventory(user: AuthenticatedUser): Promise<InventoryI
   const result = await getPool().query<InventoryItem>(
     `SELECT i.sku, i.name, i.category, s.location, s.bin,
             s.on_hand::text AS "onHand", i.reorder_point::text AS reorder, i.unit,
+            i.auto_reorder_enabled AS "autoReorderEnabled",
+            i.auto_reorder_quantity::text AS "autoReorderQuantity",
+            (SELECT COALESCE(SUM(s2.on_hand),0)::text FROM inventory_stock s2
+              WHERE s2.item_id=i.id AND s2.organization_id=i.organization_id) AS "totalOnHand",
             CASE WHEN s.on_hand = 0 THEN 'Out of stock'
                  WHEN s.on_hand <= i.reorder_point THEN 'Low stock'
                  ELSE 'Healthy' END AS state,
@@ -156,7 +164,7 @@ export async function createInventoryItem(input: ItemInput, user: AuthenticatedU
 export async function createMovement(input: MovementInput, user: AuthenticatedUser): Promise<void> {
   await inTransaction(async (client) => {
     const itemResult = await client.query<{ id: string }>(
-      "SELECT id FROM inventory_items WHERE sku = $1 AND organization_id=$2 AND is_active = true",
+      "SELECT id FROM inventory_items WHERE sku = $1 AND organization_id=$2 AND is_active = true FOR UPDATE",
       [input.sku,user.organizationId],
     );
     const itemId = itemResult.rows[0]?.id;
@@ -239,6 +247,7 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
        VALUES ($1,$2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [user.organizationId,itemId, input.type, delta, fromLocation, fromBin, toLocation, toBin, input.reference ?? null, user.id, input.idempotencyKey],
     );
+    await evaluateAutoReorder(client,user.organizationId,itemId,user.id);
     await writeAudit(client, user.id, user.organizationId, `inventory.${input.type}`, "inventory_item", itemId, {
       sku: input.sku,
       quantityDelta: delta,
