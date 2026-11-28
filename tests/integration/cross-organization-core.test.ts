@@ -12,7 +12,7 @@ let actors: Actors;
 let h: Handlers;
 let otherOrgId: string;
 let otherProjectId: string;
-let otherSku = "OTHER-ORG-SKU";
+const otherSku = "OTHER-ORG-SKU";
 
 const resource = (name: string, method: "GET" | "POST", cookie: string, body?: Record<string,unknown>) =>
   call((request) => method==="POST"
