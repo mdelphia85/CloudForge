@@ -1,9 +1,10 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { getPool } from "@/server/db";
 import { errorResponse } from "@/server/errors";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     await requireUser(request);
     const [users, items] = await Promise.all([
@@ -15,3 +16,5 @@ export async function GET(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);

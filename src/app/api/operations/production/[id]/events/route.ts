@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { inTransaction, getPool } from "@/server/db";
@@ -9,7 +10,7 @@ type Context = {params:Promise<{id:string}>};
 const KINDS = ["start","hold","resume","progress","scrap","complete","note","material"] as const;
 type Kind = typeof KINDS[number];
 
-export async function GET(request:Request,{params}:Context) {
+async function handleGET(request:Request,{params}:Context) {
   try {
     await requireUser(request);
     const {id}=await params;
@@ -23,7 +24,7 @@ export async function GET(request:Request,{params}:Context) {
   } catch(error) { return errorResponse(error); }
 }
 
-export async function POST(request:Request,{params}:Context) {
+async function handlePOST(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -123,3 +124,6 @@ export async function POST(request:Request,{params}:Context) {
     return NextResponse.json(result,{status:result.replayed?200:201});
   } catch(error) { return errorResponse(operationsError(error)); }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

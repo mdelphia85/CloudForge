@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse, readJson, requireSameOrigin } from "@/server/errors";
@@ -7,7 +8,7 @@ import { requireUuid } from "@/server/phase4/shared";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function POST(request: Request, { params }: Context) {
+async function handlePOST(request: Request, { params }: Context) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -18,3 +19,5 @@ export async function POST(request: Request, { params }: Context) {
     return errorResponse(operationsError(error));
   }
 }
+
+export const POST = withOrganizationRoute(handlePOST);
