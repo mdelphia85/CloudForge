@@ -37,7 +37,8 @@ export async function listGateways(user: AuthenticatedUser) {
   const result = await getPool().query(
     "SELECT g.id,g.name,g.enabled,g.revoked_at AS \"revokedAt\",g.expires_at AS \"expiresAt\",g.created_at AS \"createdAt\", " +
     "g.highest_sequence::text AS \"highestSequence\",count(t.tag_id)::int AS \"tagCount\" " +
-    "FROM industrial_gateways g LEFT JOIN gateway_allowed_tags t ON t.gateway_id=g.id GROUP BY g.id ORDER BY g.created_at DESC LIMIT 500",
+    "FROM industrial_gateways g LEFT JOIN gateway_allowed_tags t ON t.gateway_id=g.id WHERE g.organization_id=$1 GROUP BY g.id ORDER BY g.created_at DESC LIMIT 500",
+    [user.organizationId],
   );
   return { gateways: result.rows };
 }
@@ -56,32 +57,32 @@ export async function registerGateway(body: Record<string, unknown>, user: Authe
   return inTransaction(async (client) => {
     const tags = await client.query<{ id: string; asset_id: string; status: string }>(
       "SELECT t.id,t.asset_id,a.status FROM asset_telemetry_tags t JOIN engineering_assets a ON a.id=t.asset_id " +
-      "WHERE t.id=ANY($1::uuid[]) AND t.enabled ORDER BY t.id",
-      [tagIds],
+      "WHERE t.id=ANY($1::uuid[]) AND t.enabled AND t.organization_id=$2 AND a.organization_id=$2 ORDER BY t.id",
+      [tagIds,user.organizationId],
     );
     if (tags.rowCount !== tagIds.length || tags.rows.some((tag) => tag.status === "retired")) {
       throw new HttpError(400, "INVALID_TAGS", "All allowed tags must belong to active equipment.");
     }
     const gateway = await client.query<{ id: string }>(
-      "INSERT INTO industrial_gateways(name,public_key,expires_at,created_by) VALUES($1,$2,$3,$4) RETURNING id",
-      [name,key,expiresAt,user.id],
+      "INSERT INTO industrial_gateways(organization_id,name,public_key,expires_at,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id",
+      [user.organizationId,name,key,expiresAt,user.id],
     );
     const gatewayId = gateway.rows[0].id;
     for (const assetId of new Set(tags.rows.map((tag) => tag.asset_id))) {
       const source = await client.query<{ id: string }>(
-        "INSERT INTO asset_telemetry_sources(asset_id,provider,gateway_id,updated_by) VALUES($1,'gateway',$2,$3) " +
+        "INSERT INTO asset_telemetry_sources(organization_id,asset_id,provider,gateway_id,updated_by) VALUES($4,$1,'gateway',$2,$3) " +
         "ON CONFLICT(asset_id,provider) DO UPDATE SET gateway_id=EXCLUDED.gateway_id,connection_state='disconnected', " +
         "last_seen_at=NULL,last_status_at=now(),updated_by=EXCLUDED.updated_by,updated_at=now() " +
         "WHERE EXISTS(SELECT 1 FROM industrial_gateways old WHERE old.id=asset_telemetry_sources.gateway_id AND old.revoked_at IS NOT NULL) " +
         "RETURNING id",
-        [assetId,gatewayId,user.id],
+        [assetId,gatewayId,user.id,user.organizationId],
       );
       if (!source.rowCount) throw new HttpError(409, "GATEWAY_SOURCE_EXISTS", "Equipment already has a gateway source.");
       await client.query("DELETE FROM equipment_alarm_rule_source_state WHERE source_id=$1", [source.rows[0].id]);
     }
     await client.query(
-      "INSERT INTO gateway_allowed_tags(gateway_id,tag_id) SELECT $1,unnest($2::uuid[])",
-      [gatewayId,tagIds],
+      "INSERT INTO gateway_allowed_tags(organization_id,gateway_id,tag_id) SELECT $3,$1,unnest($2::uuid[])",
+      [gatewayId,tagIds,user.organizationId],
     );
     await audit(client,user,"gateway.registered","industrial_gateway",gatewayId,{ name,tagIds,expiresAt });
     return { id: gatewayId };
@@ -98,7 +99,7 @@ export async function updateGateway(id: string, body: Record<string, unknown>, u
   const expiresAt = action === "rotate" ? expiry(body.expiresAt) : null;
   return inTransaction(async (client) => {
     const gateway = await client.query<{ revoked_at: Date | null; expires_at: Date }>(
-      "SELECT revoked_at,expires_at FROM industrial_gateways WHERE id=$1 FOR UPDATE", [id],
+      "SELECT revoked_at,expires_at FROM industrial_gateways WHERE id=$1 AND organization_id=$2 FOR UPDATE", [id,user.organizationId],
     );
     if (!gateway.rowCount) throw new HttpError(404, "GATEWAY_NOT_FOUND", "Gateway not found.");
     if (gateway.rows[0].revoked_at) throw new HttpError(409, "GATEWAY_REVOKED", "A revoked gateway cannot be changed.");
