@@ -10,12 +10,15 @@ export default function AcceptOrganizationInvitation() {
   const [error,setError]=useState("");
 
   useEffect(()=>{
-    const params=new URLSearchParams(window.location.hash.startsWith("#") ?
-      window.location.hash.slice(1) : "");
-    const invite=params.get("token") ?? "";
-    if (/^[A-Za-z0-9_-]{43}$/.test(invite)) setToken(invite);
-    // The token must not remain visible in browser address history.
+    let active=true;
+    const hash=window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     window.history.replaceState(null,"","/join");
+    // Read the URL fragment asynchronously, after mount; it never reaches the server.
+    void Promise.resolve().then(()=>{
+      const invite=new URLSearchParams(hash).get("token") ?? "";
+      if (active && /^[A-Za-z0-9_-]{43}$/.test(invite)) setToken(invite);
+    });
+    return ()=>{active=false;};
   },[]);
 
   async function submit(event:FormEvent<HTMLFormElement>) {
@@ -55,7 +58,7 @@ export default function AcceptOrganizationInvitation() {
         <Link href="/" className="text-teal-700 font-semibold underline">Return to sign in</Link>
       </div> : <>
         <p className="text-sm text-slate-600">
-          You must have a valid invitation. New users provide their display name
+          An invitation is required. New users provide their display name
           and a strong password. Existing CloudForge users enter their current
           account password; the display name is ignored for existing accounts.
         </p>
