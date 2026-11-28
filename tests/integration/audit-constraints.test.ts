@@ -174,6 +174,7 @@ describe("migrations", () => {
       "010_phase5_industrial_gateways.sql",
       "011_phase5_alarm_source_state.sql",
       "012_organization_foundation.sql",
+      "013_engineering_direct_uploads.sql",
       "014_session_organization_binding.sql",
       "015_cross_organization_references.sql",
       "016_tenant_row_security.sql",

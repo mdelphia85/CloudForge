@@ -17,7 +17,8 @@ async function handleGET(request:Request,{params}:Context) {
     }>(
       "SELECT r.id,r.document_id,r.file_name,r.sha256,d.kind,d.project_id,d.asset_id,"+
       "r.status,r.uploaded_by,r.file_data,r.byte_size FROM engineering_revisions r "+
-      "JOIN engineering_documents d ON d.id=r.document_id WHERE r.id=$1",[revisionId],
+      "JOIN engineering_documents d ON d.id=r.document_id WHERE r.id=$1 AND r.organization_id=$2 AND d.organization_id=$2",
+      [revisionId,user.organizationId],
     );
     if(!result.rowCount) throw new HttpError(404,"NOT_FOUND","Revision not found.");
     const row=result.rows[0];
@@ -25,8 +26,9 @@ async function handleGET(request:Request,{params}:Context) {
       if(user.role==="viewer") {
         const assigned=await getPool().query(
           "SELECT 1 FROM field_service_jobs s WHERE s.assigned_to=$1 AND s.status<>'completed' "+
-          "AND $2 IN ('plc','hmi') AND (s.asset_id=$3 OR ($3 IS NULL AND s.project_id=$4)) LIMIT 1",
-          [user.id,row.kind,row.asset_id,row.project_id],
+          "AND s.organization_id=$5 AND $2 IN ('plc','hmi','electrical_schematic','mechanical_schematic') " +
+          "AND (s.asset_id=$3 OR ($3 IS NULL AND s.project_id=$4)) LIMIT 1",
+          [user.id,row.kind,row.asset_id,row.project_id,user.organizationId],
         );
         if(!assigned.rowCount) throw new HttpError(403,"FORBIDDEN","Approved programs are available only to technicians assigned to matching open service work.");
       } else {
@@ -64,24 +66,27 @@ async function handlePATCH(request:Request,{params}:Context) {
     const revisionId=requireUuid(id);
     const result=await inTransaction(async client=>{
       const check=await client.query<{document_id:string}>(
-        "SELECT document_id FROM engineering_revisions WHERE id=$1",[revisionId],
+        "SELECT document_id FROM engineering_revisions WHERE id=$1 AND organization_id=$2",
+        [revisionId,user.organizationId],
       );
       if(!check.rowCount) throw new HttpError(404,"NOT_FOUND","Revision not found.");
       const documentId=check.rows[0].document_id;
-      await client.query("SELECT id FROM engineering_documents WHERE id=$1 FOR UPDATE",[documentId]);
+      await client.query("SELECT id FROM engineering_documents WHERE id=$1 AND organization_id=$2 FOR UPDATE",
+        [documentId,user.organizationId]);
       const revision=await client.query<{status:string;revision:number}>(
-        "SELECT status,revision FROM engineering_revisions WHERE id=$1 FOR UPDATE",[revisionId],
+        "SELECT status,revision FROM engineering_revisions WHERE id=$1 AND organization_id=$2 FOR UPDATE",
+        [revisionId,user.organizationId],
       );
       if(revision.rows[0].status==="approved") return {id:revisionId,status:"approved",alreadyApproved:true};
       if(revision.rows[0].status!=="draft")
         throw new HttpError(409,"IMMUTABLE_REVISION","Superseded revisions cannot be approved again.");
       await client.query(
-        "UPDATE engineering_revisions SET status='superseded' WHERE document_id=$1 AND status='approved'",
-        [documentId],
+        "UPDATE engineering_revisions SET status='superseded' WHERE document_id=$1 AND organization_id=$2 AND status='approved'",
+        [documentId,user.organizationId],
       );
       await client.query(
-        "UPDATE engineering_revisions SET status='approved',approved_at=now(),approved_by=$2 WHERE id=$1",
-        [revisionId,user.id],
+        "UPDATE engineering_revisions SET status='approved',approved_at=now(),approved_by=$2 WHERE id=$1 AND organization_id=$3",
+        [revisionId,user.id,user.organizationId],
       );
       await audit(client,user,"engineering.revision_approved","engineering_document",documentId,
         {revisionId,revision:revision.rows[0].revision});
