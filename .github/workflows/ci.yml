@@ -181,7 +181,7 @@ jobs:
           INSERT INTO engineering_revisions(document_id,revision,file_name,content_type,
             byte_size,sha256,file_data,uploaded_by)
             SELECT d.id,1,'backup-verify.bin','application/octet-stream',4,
-              repeat('a',64),decode('DEADBEEF','hex'),u.id
+              encode(sha256(decode('DEADBEEF','hex')),'hex'),decode('DEADBEEF','hex'),u.id
               FROM engineering_documents d CROSS JOIN users u
              WHERE d.title='Recovered PLC program' AND u.email='ci-owner@example.test';
           SQL
@@ -208,6 +208,11 @@ jobs:
             psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
           ')
           test "$program" = "deadbeef"
+          integrity=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc "SELECT count(*) FROM engineering_revisions WHERE sha256=encode(sha256(file_data),chr(104)||chr(101)||chr(120)) AND byte_size=octet_length(file_data)"
+          ')
+          test "$integrity" = "1"
           original=$(docker compose exec -T postgres sh -ec '
             export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
             psql -U cloudforge_admin -d cloudforge -Atc               "SELECT count(*) FROM schema_migrations"
@@ -248,6 +253,11 @@ jobs:
               "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
           ')"
           test "$actual" = "deadbeef"
+          integrity=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_secure_ci -Atc "SELECT count(*) FROM engineering_revisions WHERE sha256=encode(sha256(file_data),chr(104)||chr(101)||chr(120)) AND byte_size=octet_length(file_data)"
+          ')
+          test "$integrity" = "1"
           rm -rf -- /tmp/cloudforge-ci-encrypted /tmp/cloudforge-ci-recovery.key
           echo "Encrypted backup and clean-room restore accepted."
       - name: Diagnostic logs on failure
