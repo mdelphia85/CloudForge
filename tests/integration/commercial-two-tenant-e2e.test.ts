@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { createServer, type Server } from "node:net";
+import type { AddressInfo } from "node:net";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -23,6 +25,8 @@ const originalPublicKey=process.env.LICENSE_PUBLIC_KEY;
 const originalFlags={
   multi:process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED,
   license:process.env.CLOUDFORGE_LICENSE_ENFORCEMENT_REQUIRED,
+  scannerHost:process.env.CLOUDFORGE_CLAMAV_HOST,
+  scannerPort:process.env.CLOUDFORGE_CLAMAV_PORT,
 };
 const keys=generateKeyPairSync("ed25519");
 const publicKey=keys.publicKey.export({type:"spki",format:"pem"}).toString();
@@ -30,6 +34,7 @@ const APP_DB_ROLE="cloudforge_e2e_test";
 const APP_DB_PASSWORD="CI-Only-E2E-Database-Password-2026!";
 
 let h:Handlers;
+let scanner:Server;
 let a:Actors;
 let aOrg="";
 let bOrg="";
@@ -70,6 +75,46 @@ const resourceGet=(resource:string,cookie:string)=>
   });
 
 beforeAll(async()=>{
+  scanner=createServer(socket=>{
+    let buffer=Buffer.alloc(0);
+    let command=false;
+    let pending=-1;
+    const chunks:Buffer[]=[];
+    socket.on("data",(received:Buffer)=>{
+      buffer=Buffer.concat([buffer,received]);
+      if(!command) {
+        if(buffer.length<10)return;
+        if(buffer.subarray(0,10).toString()!=="zINSTREAM\0"){
+          socket.end("stream: ERROR\0");return;
+        }
+        buffer=buffer.subarray(10);
+        command=true;
+      }
+      while(true) {
+        if(pending<0) {
+          if(buffer.length<4)return;
+          pending=buffer.readUInt32BE(0);
+          buffer=buffer.subarray(4);
+          if(pending===0) {
+            const payload=Buffer.concat(chunks);
+            socket.end(payload.includes(Buffer.from("EICAR"))?
+              "stream: EICAR-Test-Signature FOUND\0":"stream: OK\0");
+            return;
+          }
+        }
+        if(buffer.length<pending)return;
+        chunks.push(Buffer.from(buffer.subarray(0,pending)));
+        buffer=buffer.subarray(pending);
+        pending=-1;
+      }
+    });
+  });
+  await new Promise<void>((resolve,reject)=>{
+    scanner.once("error",reject);
+    scanner.listen(0,"127.0.0.1",resolve);
+  });
+  process.env.CLOUDFORGE_CLAMAV_HOST="127.0.0.1";
+  process.env.CLOUDFORGE_CLAMAV_PORT=String((scanner.address() as AddressInfo).port);
   // Never run this test against a real customer database. The guard rejects
   // production names, provider hosts, and non-test Postgres users.
   const safeUrl=assertSafeTestDatabaseUrl({...process.env,DATABASE_URL:undefined});
@@ -159,6 +204,11 @@ beforeAll(async()=>{
 
 afterAll(async()=>{
   await closeDatabases();
+  await new Promise<void>((resolve,reject)=>scanner.close(error=>error?reject(error):resolve()));
+  if(originalFlags.scannerHost===undefined) delete process.env.CLOUDFORGE_CLAMAV_HOST;
+  else process.env.CLOUDFORGE_CLAMAV_HOST=originalFlags.scannerHost;
+  if(originalFlags.scannerPort===undefined) delete process.env.CLOUDFORGE_CLAMAV_PORT;
+  else process.env.CLOUDFORGE_CLAMAV_PORT=originalFlags.scannerPort;
   if(originalDatabaseUrl===undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL=originalDatabaseUrl;
   if(originalPublicKey===undefined) delete process.env.LICENSE_PUBLIC_KEY;
@@ -276,4 +326,22 @@ it("keeps automatic replenishment requests separate under the restricted multi-c
   expect(bQueue.body.requests.map((row:{id:string})=>row.id)).toContain(forB.body.createdRequestId);
   expect(bQueue.body.requests.map((row:{id:string})=>row.id)).not.toContain(forA.body.createdRequestId);
   expect((await testPool().query("SELECT 1 FROM purchase_orders")).rowCount).toBe(0);
+});
+
+it("rejects a malware-positive PLC upload and never stores it",async()=>{
+  const projects=await resourceGet("projects",a.admin.cookie);
+  const form=new FormData();
+  form.set("kind","plc");
+  form.set("projectId",String(projects.body.records[0].id));
+  form.set("title","Malware positive sample");
+  form.set("file",new File([Buffer.from("EICAR-MARKER")],"suspected.plc"));
+  const result=await uploader.POST(new Request(ORIGIN+"/api/engineering/uploads",{
+    method:"POST",headers:{origin:ORIGIN,cookie:a.admin.cookie},body:form,
+  }));
+  expect(result.status).toBe(415);
+  expect((await result.json()).code).toBe("ENGINEERING_FILE_REJECTED");
+  const count=await testPool().query(
+    "SELECT 1 FROM engineering_documents WHERE title='Malware positive sample'",
+  );
+  expect(count.rowCount).toBe(0);
 });
