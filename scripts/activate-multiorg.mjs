@@ -36,6 +36,7 @@ const expectedMigrations=[
   "018_explicit_memberships_and_invitations.sql",
   "019_inventory_auto_reorder.sql",
   "020_totp_mfa_recovery.sql",
+  "021_mfa_device_recovery.sql",
 ];
 const pool=new pg.Pool({connectionString,max:1});
 const client=await pool.connect();
