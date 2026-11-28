@@ -99,76 +99,6 @@ describe("Phase 2 BOM migration provenance", () => {
       revision_code: "A", status: "superseded", approved_by: null, approved_at: null,
     });
 
-    describe("existing installation organization migration", () => {
-      afterAll(closeDatabases);
-
-      it("preserves historical records and memberships while preventing a second organization", async () => {
-        await applyMigrationsThrough("011_phase5_alarm_source_state.sql", true);
-        const user = await testPool().query<{ id: string }>(
-          "INSERT INTO users(email,display_name,password_hash,role) VALUES('legacy@example.test','Legacy admin','unused','admin') RETURNING id",
-        );
-        const userId = user.rows[0].id;
-        await testPool().query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", ["c".repeat(64), userId]);
-        const item = await testPool().query<{ id: string }>(
-          "INSERT INTO inventory_items(sku,name,category,unit,reorder_point,created_by) VALUES('LEGACY-1','Controller','Controls','ea',0,$1) RETURNING id",
-          [userId],
-        );
-        const project = await testPool().query<{ id: string }>(
-          "INSERT INTO projects(code,name,customer,created_by) VALUES('LEGACY','Legacy project','Example',$1) RETURNING id",
-          [userId],
-        );
-        const asset = await testPool().query<{ id: string }>(
-          "INSERT INTO engineering_assets(project_id,asset_tag,name,customer_site,created_by) VALUES($1,'LEGACY-ASSET','Legacy machine','Site',$2) RETURNING id",
-          [project.rows[0].id, userId],
-        );
-        const document = await testPool().query<{ id: string }>(
-          "INSERT INTO engineering_documents(project_id,asset_id,title,kind,created_by) VALUES($1,$2,'Legacy PLC','plc',$3) RETURNING id",
-          [project.rows[0].id, asset.rows[0].id, userId],
-        );
-        const revision = await testPool().query<{ id: string }>(
-          "INSERT INTO engineering_revisions(document_id,revision,file_name,content_type,byte_size,sha256,file_data,status,uploaded_by,approved_by,approved_at) " +
-          "VALUES($1,1,'legacy.bin','application/octet-stream',3,$2,$3,'approved',$4,$4,now()) RETURNING id",
-          [document.rows[0].id, "d".repeat(64), Buffer.from("plc"), userId],
-        );
-        const service = await testPool().query<{ id: string }>(
-          "INSERT INTO field_service_jobs(project_id,asset_id,title,assigned_to,created_by) VALUES($1,$2,'Legacy service',$3,$3) RETURNING id",
-          [project.rows[0].id, asset.rows[0].id, userId],
-        );
-        await testPool().query(
-          "INSERT INTO field_program_installs(service_job_id,revision_id,result,performed_by) VALUES($1,$2,'installed',$3)",
-          [service.rows[0].id, revision.rows[0].id, userId],
-        );
-        await testPool().query(
-          "INSERT INTO inventory_movements(item_id,movement_type,quantity_delta,actor_user_id,idempotency_key) VALUES($1,'opening',2,$2,'legacy-movement')",
-          [item.rows[0].id, userId],
-        );
-        await testPool().query(
-          "INSERT INTO audit_events(actor_user_id,action,entity_type,entity_id) VALUES($1,'legacy.event','user',$1)",
-          [userId],
-        );
-        const tables = ["sessions", "inventory_items", "inventory_movements", "audit_events", "projects",
-          "engineering_assets", "engineering_documents", "engineering_revisions", "field_service_jobs", "field_program_installs"];
-        const snapshots = await Promise.all(tables.map(async (table) =>
-          (await testPool().query(`SELECT to_jsonb(t) AS data FROM ${table} t ORDER BY 1`)).rows,
-        ));
-
-        const migrated = runMigrations();
-        expect(migrated.status, migrated.output).toBe(0);
-        const organization = (await testPool().query("SELECT id FROM organizations WHERE identifier='existing-installation'")).rows[0].id;
-        for (const [index, table] of tables.entries()) {
-          const rows = await testPool().query(`SELECT to_jsonb(t) - 'organization_id' AS data, organization_id FROM ${table} t ORDER BY 1`);
-          expect(rows.rows.map((row) => ({ data: row.data }))).toEqual(snapshots[index]);
-          expect(rows.rows.every((row) => row.organization_id === organization)).toBe(true);
-        }
-        expect((await testPool().query("SELECT user_id,role FROM organization_memberships")).rows).toEqual([{ user_id: userId, role: "admin" }]);
-        await expect(testPool().query("INSERT INTO organizations(identifier,name) VALUES('another','Another organization')"))
-          .rejects.toMatchObject({ code: "23505" });
-        const newUser = await testPool().query<{ id: string }>(
-          "INSERT INTO users(email,display_name,password_hash,role) VALUES('new@example.test','New user','unused','viewer') RETURNING id",
-        );
-        expect((await testPool().query("SELECT role FROM organization_memberships WHERE user_id=$1", [newUser.rows[0].id])).rows[0].role).toBe("viewer");
-      });
-    });
     expect(imported.rows[1]).toMatchObject({
       revision_code: "B", status: "legacy", approved_by: null, approved_at: null,
     });
@@ -219,5 +149,72 @@ describe("Phase 2 BOM migration provenance", () => {
         action: "engineering.bom_revision.approved", actor_user_id: actors.admin.id,
       }),
     ]));
+  });
+
+  it("preserves historical records and memberships while preventing a second organization", async () => {
+    await applyMigrationsThrough("011_phase5_alarm_source_state.sql", true);
+    const user = await testPool().query<{ id: string }>(
+      "INSERT INTO users(email,display_name,password_hash,role) VALUES('legacy@example.test','Legacy admin','unused','admin') RETURNING id",
+    );
+    const userId = user.rows[0].id;
+    await testPool().query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '1 hour')", ["c".repeat(64), userId]);
+    const item = await testPool().query<{ id: string }>(
+      "INSERT INTO inventory_items(sku,name,category,unit,reorder_point,created_by) VALUES('LEGACY-1','Controller','Controls','ea',0,$1) RETURNING id",
+      [userId],
+    );
+    const project = await testPool().query<{ id: string }>(
+      "INSERT INTO projects(code,name,customer,created_by) VALUES('LEGACY','Legacy project','Example',$1) RETURNING id",
+      [userId],
+    );
+    const asset = await testPool().query<{ id: string }>(
+      "INSERT INTO engineering_assets(project_id,asset_tag,name,customer_site,created_by) VALUES($1,'LEGACY-ASSET','Legacy machine','Site',$2) RETURNING id",
+      [project.rows[0].id, userId],
+    );
+    const document = await testPool().query<{ id: string }>(
+      "INSERT INTO engineering_documents(project_id,asset_id,title,kind,created_by) VALUES($1,$2,'Legacy PLC','plc',$3) RETURNING id",
+      [project.rows[0].id, asset.rows[0].id, userId],
+    );
+    const revision = await testPool().query<{ id: string }>(
+      "INSERT INTO engineering_revisions(document_id,revision,file_name,content_type,byte_size,sha256,file_data,status,uploaded_by,approved_by,approved_at) " +
+      "VALUES($1,1,'legacy.bin','application/octet-stream',3,$2,$3,'approved',$4,$4,now()) RETURNING id",
+      [document.rows[0].id, "d".repeat(64), Buffer.from("plc"), userId],
+    );
+    const service = await testPool().query<{ id: string }>(
+      "INSERT INTO field_service_jobs(project_id,asset_id,title,assigned_to,created_by) VALUES($1,$2,'Legacy service',$3,$3) RETURNING id",
+      [project.rows[0].id, asset.rows[0].id, userId],
+    );
+    await testPool().query(
+      "INSERT INTO field_program_installs(service_job_id,revision_id,result,performed_by) VALUES($1,$2,'installed',$3)",
+      [service.rows[0].id, revision.rows[0].id, userId],
+    );
+    await testPool().query(
+      "INSERT INTO inventory_movements(item_id,movement_type,quantity_delta,actor_user_id,idempotency_key) VALUES($1,'opening',2,$2,'legacy-movement')",
+      [item.rows[0].id, userId],
+    );
+    await testPool().query(
+      "INSERT INTO audit_events(actor_user_id,action,entity_type,entity_id) VALUES($1,'legacy.event','user',$1)",
+      [userId],
+    );
+    const tables = ["sessions", "inventory_items", "inventory_movements", "audit_events", "projects",
+      "engineering_assets", "engineering_documents", "engineering_revisions", "field_service_jobs", "field_program_installs"];
+    const snapshots = await Promise.all(tables.map(async (table) =>
+      (await testPool().query(`SELECT to_jsonb(t) AS data FROM ${table} t ORDER BY 1`)).rows,
+    ));
+
+    const migrated = runMigrations();
+    expect(migrated.status, migrated.output).toBe(0);
+    const organization = (await testPool().query("SELECT id FROM organizations WHERE identifier='existing-installation'")).rows[0].id;
+    for (const [index, table] of tables.entries()) {
+      const rows = await testPool().query(`SELECT to_jsonb(t) - 'organization_id' AS data, organization_id FROM ${table} t ORDER BY 1`);
+      expect(rows.rows.map((row) => ({ data: row.data }))).toEqual(snapshots[index]);
+      expect(rows.rows.every((row) => row.organization_id === organization)).toBe(true);
+    }
+    expect((await testPool().query("SELECT user_id,role FROM organization_memberships")).rows).toEqual([{ user_id: userId, role: "admin" }]);
+    await expect(testPool().query("INSERT INTO organizations(identifier,name) VALUES('another','Another organization')"))
+      .rejects.toMatchObject({ code: "23505" });
+    const newUser = await testPool().query<{ id: string }>(
+      "INSERT INTO users(email,display_name,password_hash,role) VALUES('new@example.test','New user','unused','viewer') RETURNING id",
+    );
+    expect((await testPool().query("SELECT role FROM organization_memberships WHERE user_id=$1", [newUser.rows[0].id])).rows[0].role).toBe("viewer");
   });
 });
