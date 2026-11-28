@@ -5,6 +5,7 @@ import { inTransaction, getPool } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, positive, requireUuid, shortText } from "@/server/operations";
 import { deductAvailableStock } from "@/server/inventory-allocation";
+import { evaluateAutoReorder } from "@/server/auto-reorder";
 
 type Context = {params:Promise<{id:string}>};
 const KINDS = ["start","hold","resume","progress","scrap","complete","note","material"] as const;
@@ -99,7 +100,7 @@ async function handlePOST(request:Request,{params}:Context) {
       }
       if(action==="material") {
         if(!sku||!location||!bin) throw new HttpError(400,"INVALID_MATERIAL","Material issues require an SKU, location, and bin.");
-        const item=await client.query<{id:string}>("SELECT id FROM inventory_items WHERE sku=$1 AND is_active=true",[sku]);
+        const item=await client.query<{id:string}>("SELECT id FROM inventory_items WHERE sku=$1 AND organization_id=$2 AND is_active=true FOR UPDATE",[sku,user.organizationId]);
         if(!item.rowCount) throw new HttpError(404,"SKU_NOT_FOUND","Inventory SKU not found.");
         itemId=item.rows[0].id;
         await deductAvailableStock(client,itemId,location,bin,quantity,user.id,{
@@ -111,6 +112,7 @@ async function handlePOST(request:Request,{params}:Context) {
           [itemId,quantity,location,bin,"Production "+job.job_code,user.id,"production:"+key],
         );
         movementId=move.rows[0].id;
+        await evaluateAutoReorder(client,user.organizationId,itemId,user.id);
         await audit(client,user,"inventory.issue","inventory_item",itemId,{productionJob:jobId,sku,quantity,location,bin});
       }
       const event=await client.query<{id:string}>(
