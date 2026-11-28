@@ -11,7 +11,7 @@ export async function POST(request:Request) {
     if(typeof body.password!=="string"||body.password.length>256) {
       throw new HttpError(400,"INVALID_PASSWORD","Re-enter your account password.");
     }
-    const result=await startMfaEnrollment(user.id,user.organizationId,body.password);
+    const result=await startMfaEnrollment(user.id,user.organizationId,body.password,user.mfaRecoveryAuthenticated);
     return NextResponse.json(result,{headers:{"Cache-Control":"no-store","Pragma":"no-cache"}});
   }catch(error){return errorResponse(error);}
 }
