@@ -13,13 +13,18 @@ type User = { id: string; email: string; displayName: string; role: "admin" | "o
 type ManagedUser = User & { isActive: boolean };
 type Item = {
   sku: string; name: string; category: string; location: string; bin: string;
-  onHand: string; reorder: string; unit: string;
+  onHand: string; totalOnHand: string; reorder: string; unit: string;
+  autoReorderEnabled: boolean; autoReorderQuantity: string;
   state: "Healthy" | "Low stock" | "Out of stock"; updated: string;
 };
 type Movement = {
   type: string; quantityDelta: string; fromLocation: string | null; fromBin: string | null;
   toLocation: string | null; toBin: string | null; reference: string | null;
   createdAt: string; actorName: string;
+};
+type ReorderRequest = {
+  id: string; sku: string; name: string; quantity: string; status: string;
+  createdAt: string; reference: string; autoReorderEnabled: boolean;
 };
 type AuthStatus = { setupRequired: boolean; setupEnabled: boolean; user: User | null };
 
@@ -39,6 +44,8 @@ export default function InventoryWorkspace() {
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupEnabled, setSetupEnabled] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
+  const [reorders, setReorders] = useState<ReorderRequest[]>([]);
+  const [notice, setNotice] = useState("");
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [query, setQuery] = useState("");
@@ -51,8 +58,12 @@ export default function InventoryWorkspace() {
   const [error, setError] = useState("");
 
   const refreshItems = useCallback(async () => {
-    const result = await requestJson<{ items: Item[] }>("/api/inventory");
+    const [result,queue] = await Promise.all([
+      requestJson<{ items: Item[] }>("/api/inventory"),
+      requestJson<{ requests: ReorderRequest[] }>("/api/inventory/reorder"),
+    ]);
     setItems(result.items);
+    setReorders(queue.requests);
   }, []);
 
   const loadSession = useCallback(async () => {
@@ -80,8 +91,11 @@ export default function InventoryWorkspace() {
         setSetupEnabled(status.setupEnabled);
         setUser(status.user);
         if (status.user) {
-          const result = await requestJson<{ items: Item[] }>("/api/inventory");
-          if (active) setItems(result.items);
+          const [result,queue] = await Promise.all([
+            requestJson<{ items: Item[] }>("/api/inventory"),
+            requestJson<{ requests: ReorderRequest[] }>("/api/inventory/reorder"),
+          ]);
+          if (active) { setItems(result.items); setReorders(queue.requests); }
         }
       })
       .catch((reason: unknown) => {
@@ -142,12 +156,56 @@ export default function InventoryWorkspace() {
     }
   }
 
+  async function saveAutoReorder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedItem) return;
+    const form=new FormData(event.currentTarget);
+    const enabled=form.get("enabled")==="on";
+    const quantity=String(form.get("replenishQuantity") ?? "");
+    const point=String(form.get("reorderPoint") ?? "");
+    setSaving(true);setError("");setNotice("");
+    try {
+      const result=await requestJson<{createdRequestId:string|null}>("/api/inventory/reorder",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          sku:selectedItem.sku, enabled, reorderPoint:point, replenishQuantity:quantity,
+        }),
+      });
+      await refreshItems();
+      setNotice(enabled
+        ? result.createdRequestId
+          ? "Auto Reorder enabled. A purchase request was created for review."
+          : "Auto Reorder enabled. No new request is needed or a request is already open."
+        : "Auto Reorder disabled. Existing purchasing records have been preserved.");
+    }catch(reason){
+      setError(reason instanceof Error?reason.message:"Unable to update Auto Reorder settings.");
+    }finally{setSaving(false);}
+  }
+
+  async function checkReorderNow() {
+    if(!selectedItem)return;
+    setSaving(true);setError("");setNotice("");
+    try {
+      const result=await requestJson<{createdRequestId:string|null}>("/api/inventory/reorder",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({sku:selectedItem.sku}),
+      });
+      await refreshItems();
+      setNotice(result.createdRequestId
+        ? "Stock is below the threshold. A new purchase request is ready for approval."
+        : "Reorder checked. No duplicate request was created.");
+    }catch(reason){
+      setError(reason instanceof Error?reason.message:"Could not check replenishment.");
+    }finally{setSaving(false);}
+  }
+
   async function signOut() {
     setSaving(true);
     try {
       await requestJson("/api/auth/logout", { method: "POST" });
       setUser(null);
       setItems([]);
+      setReorders([]);
       setSelectedSku(null);
       setMovements([]);
     } catch (reason) {
@@ -284,7 +342,7 @@ export default function InventoryWorkspace() {
               </select>
             </div>
             <div className="table-scroll"><table>
-              <thead><tr><th>Item</th><th>Category</th><th>Location / bin</th><th>On hand</th><th>Status</th><th>Updated</th></tr></thead>
+              <thead><tr><th>Item</th><th>Category</th><th>Location / bin</th><th>On hand</th><th>Status</th><th>Auto Reorder</th><th>Updated</th></tr></thead>
               <tbody>{visibleItems.map((item) => (
                 <tr className={selectedSku === item.sku ? "row-selected" : ""} key={`${item.sku}-${item.location}-${item.bin}`} onClick={() => { setMovements([]); setSelectedSku(item.sku); setError(""); }}>
                   <td><div className="item-cell"><span className="item-thumb"><Package size={17} /></span><div><strong>{item.name}</strong><span>{item.sku}</span></div></div></td>
@@ -292,6 +350,7 @@ export default function InventoryWorkspace() {
                   <td><div className="location-cell"><span>{item.location}</span><small>{item.bin}</small></div></td>
                   <td><strong>{Number(item.onHand).toLocaleString()}</strong> <span className="unit">{item.unit}</span><small className="reorder-line">reorder at {Number(item.reorder).toLocaleString()}</small></td>
                   <td><span className={`status ${item.state.toLowerCase().replaceAll(" ", "-")}`}><i />{item.state}</span></td>
+                  <td><span className="category-tag">{item.autoReorderEnabled ? "Enabled" : "Disabled"}</span></td>
                   <td className="updated">{formatTime(item.updated)}</td>
                 </tr>
               ))}</tbody>
@@ -306,7 +365,43 @@ export default function InventoryWorkspace() {
       {selectedItem && <aside className="detail-drawer" aria-label="Inventory item details">
         <button className="modal-close drawer-close" onClick={() => { setSelectedSku(null); setMovements([]); }} aria-label="Close item details">×</button>
         <p className="eyebrow">Inventory item</p><h2>{selectedItem.name}</h2><span className="detail-sku">{selectedItem.sku}</span>
-        <div className="detail-facts"><span>Category<strong>{selectedItem.category}</strong></span><span>Location<strong>{selectedItem.location}</strong></span><span>Bin<strong>{selectedItem.bin}</strong></span><span>On hand<strong>{selectedItem.onHand} {selectedItem.unit}</strong></span><span>Reorder point<strong>{selectedItem.reorder} {selectedItem.unit}</strong></span></div>
+        <div className="detail-facts"><span>Category<strong>{selectedItem.category}</strong></span><span>Location<strong>{selectedItem.location}</strong></span><span>Bin<strong>{selectedItem.bin}</strong></span><span>On hand<strong>{selectedItem.onHand} {selectedItem.unit}</strong></span><span>Reorder point<strong>{selectedItem.reorder} {selectedItem.unit}</strong></span><span>Total across bins<strong>{selectedItem.totalOnHand} {selectedItem.unit}</strong></span></div>
+        {notice && <p role="status" className="workflow-note">{notice}</p>}
+        <section className="movement-history" aria-label="Automatic replenishment settings">
+          <h3>Auto Reorder</h3>
+          <p className="workflow-note">
+            {selectedItem.autoReorderEnabled ? "Enabled" : "Disabled"} ·
+            Auto Reorder creates a purchase request for approval; it never purchases automatically.
+            Disabling stops future suggestions and preserves existing records.
+          </p>
+          {canWrite ? <form key={selectedItem.sku} onSubmit={(event)=>void saveAutoReorder(event)}>
+            <label style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="checkbox" name="enabled" defaultChecked={selectedItem.autoReorderEnabled}/>
+              Enable Auto Reorder for this item
+            </label>
+            <div className="form-grid">
+              <label>Reorder point (total across bins)
+                <input type="number" name="reorderPoint" min="0" step="0.001" required defaultValue={selectedItem.reorder}/>
+              </label>
+              <label>Replenishment quantity
+                <input type="number" name="replenishQuantity" min="0" step="0.001" required defaultValue={selectedItem.autoReorderQuantity}/>
+              </label>
+            </div>
+            <div className="drawer-actions">
+              <button type="submit" className="primary-button" disabled={saving}>Save Auto Reorder</button>
+              <button type="button" className="secondary-button" disabled={saving}
+                onClick={()=>void checkReorderNow()}>Check reorder now</button>
+            </div>
+          </form> : <p>Only administrators and operators can update this setting.</p>}
+          {reorders.filter(request=>request.sku===selectedItem.sku).slice(0,4).map(request=>(
+            <article className="movement-entry" key={request.id}>
+              <strong>Purchase request · {request.quantity} {selectedItem.unit}</strong>
+              <span>{request.status} · {request.reference}</span>
+              <small>{new Date(request.createdAt).toLocaleString()}</small>
+            </article>
+          ))}
+          <p className="workflow-note">Review purchase requests in <Link href="/operations">Projects &amp; engineering / Purchasing</Link>.</p>
+        </section>
         {canWrite && <div className="drawer-actions"><button className="primary-button" onClick={() => { setMovementType("receipt"); setModal("movement"); }}><Plus size={15} /> Record movement</button></div>}
         <div className="movement-history"><h3>Movement history</h3>{movements.length ? movements.map((movement, index) => (
           <article className="movement-entry" key={`${movement.createdAt}-${index}`}>
