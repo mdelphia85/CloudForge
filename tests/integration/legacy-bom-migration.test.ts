@@ -205,10 +205,22 @@ describe("Phase 2 BOM migration provenance", () => {
     expect(migrated.status, migrated.output).toBe(0);
     const organization = (await testPool().query("SELECT id FROM organizations WHERE identifier='existing-installation'")).rows[0].id;
     for (const [index, table] of tables.entries()) {
-      const rows = await testPool().query(`SELECT to_jsonb(t) - 'organization_id' AS data, organization_id FROM ${table} t ORDER BY 1`);
+      // New inventory columns are intentionally additive; compare all original
+      // business fields and separately assert the safe default-off policy.
+      const newInventoryColumns = table === "inventory_items"
+        ? " - 'auto_reorder_enabled' - 'auto_reorder_quantity'" : "";
+      const rows = await testPool().query(
+        `SELECT to_jsonb(t) - 'organization_id'${newInventoryColumns} AS data, organization_id FROM ${table} t ORDER BY 1`,
+      );
       expect(rows.rows.map((row) => ({ data: row.data }))).toEqual(snapshots[index]);
       expect(rows.rows.every((row) => row.organization_id === organization)).toBe(true);
     }
+    const policy = await testPool().query(
+      "SELECT auto_reorder_enabled, auto_reorder_quantity::text FROM inventory_items WHERE sku='LEGACY-1'",
+    );
+    expect(policy.rows).toMatchObject([
+      {auto_reorder_enabled:false,auto_reorder_quantity:"0.000"},
+    ]);
     expect((await testPool().query("SELECT user_id,role FROM organization_memberships")).rows).toEqual([{ user_id: userId, role: "admin" }]);
     await expect(testPool().query("INSERT INTO organizations(identifier,name) VALUES('another','Another organization')"))
       .rejects.toMatchObject({ code: "23505" });

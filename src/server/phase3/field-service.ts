@@ -3,6 +3,7 @@ import type { AuthenticatedUser } from "@/server/auth";
 import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import { deductAvailableStock } from "@/server/inventory-allocation";
+import { evaluateAutoReorder } from "@/server/auto-reorder";
 import { audit, positive, requireUuid, shortText } from "./shared";
 
 type ServiceJob = { id: string; assigned_to: string | null; status: string; project_id: string | null };
@@ -119,8 +120,8 @@ export async function recordServicePart(jobId: string, body: Record<string, unkn
 
     if (job.status === "completed") throw new HttpError(409, "JOB_CLOSED", "Parts cannot be recorded on a completed work order.");
     const item = await client.query<{ id: string }>(
-      "SELECT id FROM inventory_items WHERE sku=$1 AND is_active=true",
-      [sku],
+      "SELECT id FROM inventory_items WHERE sku=$1 AND organization_id=$2 AND is_active=true FOR UPDATE",
+      [sku,user.organizationId],
     );
     if (!item.rowCount) throw new HttpError(404, "ITEM_NOT_FOUND", "Active inventory item not found.");
     let movement: { id: string };
@@ -134,6 +135,7 @@ export async function recordServicePart(jobId: string, body: Record<string, unkn
         [item.rows[0].id, quantity, location, bin, `Field service ${jobId}`, user.id, `service-part:${key}`],
       );
       movement = result.rows[0];
+      await evaluateAutoReorder(client,user.organizationId,item.rows[0].id,user.id);
     } else {
       const used = await client.query<{ available: boolean }>(
         "SELECT COALESCE(SUM(CASE WHEN action='used' THEN quantity ELSE -quantity END),0)>=$1::numeric AS available " +
