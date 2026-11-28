@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { requireUser } from "@/server/auth";
 import { errorResponse, HttpError } from "@/server/errors";
 import { inTransaction } from "@/server/db";
-import { requireLicensedModule } from "@/server/license-entitlements";
+import { requireLicensedModule, requireValidatedOrganizationLicense } from "@/server/license-entitlements";
 import type { LicenseModule } from "@/server/licensing";
 
 export type OrganizationContext = {
@@ -60,11 +60,12 @@ function moduleForPath(path: string): LicenseModule | null {
 
 export async function enforceRouteLicense(organizationId: string, requestUrl: string): Promise<void> {
   const path = new URL(requestUrl).pathname;
-  // These aggregate endpoints expose multiple licensed modules. Until they
-  // return entitlement-filtered payloads, fail closed in shared SaaS mode.
-  if (path === "/api/operations/overview" || path.startsWith("/api/operations/phase3")) {
-    throw new HttpError(403, "UNSCOPED_AGGREGATE",
-      "This aggregate requires tenant-safe entitlement filtering before shared SaaS use.");
+  // Aggregate handlers filter their payloads by the active signed license.
+  // Validate the organization entitlement here before executing either query.
+  if (path === "/api/operations/overview" ||
+      path === "/api/operations/phase3/options") {
+    await inTransaction(client => requireValidatedOrganizationLicense(client,organizationId));
+    return;
   }
   const licensedModule = moduleForPath(path);
   if (!licensedModule) {

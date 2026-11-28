@@ -174,8 +174,21 @@ export async function listResource(resource: Resource, user: AuthenticatedUser):
   const result=await getPool().query(sql,parameters);
   return result.rows;
 }
-export async function listOverview(user: AuthenticatedUser): Promise<Record<Resource,Record<string,unknown>[]>> {
-  const entries = await Promise.all(RESOURCES.map(async resource => [resource, await listResource(resource, user)] as const));
+const OVERVIEW_MODULES: Record<Resource,string> = {
+  projects:"projects",tasks:"projects",assets:"equipment",bom:"engineering",
+  documents:"engineering",production:"production",purchasing:"purchasing",
+  service:"field_service",
+};
+export async function listOverview(
+  user: AuthenticatedUser,
+  licensedModules?: ReadonlySet<string>,
+): Promise<Record<Resource,Record<string,unknown>[]>> {
+  const entries=await Promise.all(RESOURCES.map(async resource=>{
+    if (licensedModules && !licensedModules.has(OVERVIEW_MODULES[resource])) {
+      return [resource,[]] as const;
+    }
+    return [resource,await listResource(resource,user)] as const;
+  }));
   return Object.fromEntries(entries) as Record<Resource,Record<string,unknown>[]>;
 }
 
