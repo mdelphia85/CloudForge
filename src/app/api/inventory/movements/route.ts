@@ -5,12 +5,12 @@ import { createMovement, listMovements, parseMovementInput } from "@/server/inve
 
 export async function GET(request: Request) {
   try {
-    await requireUser(request);
+    const user=await requireUser(request);
     const sku = new URL(request.url).searchParams.get("sku")?.trim().toUpperCase();
     if (!sku || !/^[A-Z0-9][A-Z0-9._-]{0,63}$/.test(sku)) {
       throw new HttpError(400, "INVALID_SKU", "Provide a valid SKU.");
     }
-    return NextResponse.json({ movements: await listMovements(sku) });
+    return NextResponse.json({ movements: await listMovements(sku,user) });
   } catch (error) {
     return errorResponse(error);
   }
