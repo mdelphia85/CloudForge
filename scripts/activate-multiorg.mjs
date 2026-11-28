@@ -56,11 +56,11 @@ async function preflight() {
       !role.rows[0].rolcanlogin) {
     throw new Error("Application database role must be LOGIN NOSUPERUSER NOBYPASSRLS.");
   }
-  const count=await client.query(
-    "SELECT count(*)::int AS total,min(id)::text AS id FROM organizations",
+  const originals=await client.query(
+    "SELECT id::text AS id FROM organizations ORDER BY id LIMIT 2",
   );
-  if(count.rows[0].total!==1)throw new Error("Activation requires exactly one existing organization.");
-  const originalOrg=count.rows[0].id;
+  if(originals.rows.length!==1)throw new Error("Activation requires exactly one existing organization.");
+  const originalOrg=originals.rows[0].id;
   const index=await client.query(
     "SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='organizations_single_installation_only'",
   );
