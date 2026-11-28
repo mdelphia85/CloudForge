@@ -9,7 +9,7 @@ import {
   Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
 } from "lucide-react";
 
-type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer"; mfaEnabled?:boolean };
+type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer"; mfaEnabled?:boolean; mfaRecoveryAuthenticated?:boolean };
 type ManagedUser = User & { isActive: boolean };
 type Item = {
   sku: string; name: string; category: string; location: string; bin: string;
@@ -327,11 +327,13 @@ export default function InventoryWorkspace() {
     );
   }
 
-  if (user && !user.mfaEnabled && (mfaRequired || mfaSetupOpen)) {
+  if (user && ((!user.mfaEnabled && mfaRequired) || mfaSetupOpen)) {
     return <main className="auth-screen"><section className="auth-card" style={{maxWidth:580}}>
       <p className="eyebrow">CloudForge account security</p>
-      <h1>Set up multi-factor authentication</h1>
-      <p className="subtitle">Use an authenticator app to protect your organization. Recovery codes are shown only once.</p>
+      <h1>{user.mfaEnabled ? "Replace lost authenticator" : "Set up multi-factor authentication"}</h1>
+      <p className="subtitle">{user.mfaEnabled
+        ? "You signed in with a one-time recovery code. Confirm your password, register a new authenticator, and save your replacement emergency codes."
+        : "Use an authenticator app to protect your organization. Recovery codes are shown only once."}</p>
       {error&&<p role="alert" className="form-error">{error}</p>}
       {mfaRecoveryCodes.length>0 ? <>
         <h2>Save your one-time recovery codes</h2>
@@ -398,6 +400,8 @@ export default function InventoryWorkspace() {
             {user.role === "admin" && <Link href="/organization/members" className="secondary-button compact-button"><Users size={15} /> Organization Members</Link>}
             {!user.mfaEnabled && <button className="secondary-button compact-button"
               onClick={()=>setMfaSetupOpen(true)}><ShieldCheck size={15}/> Enable MFA</button>}
+            {user.mfaEnabled && user.mfaRecoveryAuthenticated && <button className="secondary-button compact-button"
+              onClick={()=>setMfaSetupOpen(true)}><ShieldCheck size={15}/> Replace lost authenticator</button>}
             <button className="icon-button" aria-label="Refresh inventory" onClick={() => void refreshItems().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Refresh failed."))}><RefreshCw size={17} /></button>
             <button className="icon-button mobile-signout" aria-label="Sign out" onClick={() => void signOut()} disabled={saving}><LogOut size={15} /></button>
           </div>
