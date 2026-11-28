@@ -56,6 +56,30 @@ export async function evaluateAutoReorder(
   const row = policy.rows[0];
   if (!row || !row.enabled || !row.low || Number(row.replenish) <= 0) return null;
 
+  // Manual replenishment requests or already-open supplier purchase orders
+  // also satisfy this review need. Avoid asking purchasing to buy the same
+  // material twice simply because the automatic request has a different origin.
+  const procurement = await client.query<{already_pending:boolean}>(
+    `SELECT (
+        EXISTS(
+          SELECT 1 FROM purchase_requests pr
+           WHERE pr.organization_id=$1 AND pr.item_id=$2
+             AND pr.status IN ('requested','ordered')
+        )
+        OR EXISTS(
+          SELECT 1 FROM purchase_order_lines line
+          JOIN purchase_orders po
+            ON po.id=line.purchase_order_id
+            AND po.organization_id=line.organization_id
+          WHERE line.organization_id=$1 AND line.item_id=$2
+            AND line.received_qty < line.ordered_qty
+            AND po.status IN ('draft','submitted','ordered','partially_received')
+        )
+      ) AS already_pending`,
+    [organizationId,itemId],
+  );
+  if (procurement.rows[0]?.already_pending) return null;
+
   const inserted = await client.query<{id:string}>(
     `INSERT INTO purchase_requests
       (organization_id,item_id,quantity,reference,supplier,request_origin,created_by)
