@@ -73,7 +73,7 @@ it("streams original bytes and rejects infected or malformed scanner responses",
     const server=createServer(socket=>{
       socket.on("data",chunk=>{
         received=Buffer.concat([received,chunk]);
-        if(received.length===10+payload.length+8+4)socket.end(response);
+        if(received.length===9+payload.length+8+4)socket.end(response);
       });
     });
     server.listen(0,"127.0.0.1");
@@ -86,8 +86,8 @@ it("streams original bytes and rejects infected or malformed scanner responses",
       process.env.CLOUDFORGE_CLAMAV_PORT=String(address.port);
       if(expected)await expect(scanEngineeringFile(payload)).rejects.toMatchObject({code:expected});
       else await expect(scanEngineeringFile(payload)).resolves.toBeUndefined();
-      expect(received.subarray(0,10).toString()).toBe("zINSTREAM\0");
-      let offset=10;
+      expect(received.subarray(0,9).toString()).toBe("zINSTREAM\0");
+      let offset=9;
       const chunks:Buffer[]=[];
       while(offset<received.length){
         const length=received.readUInt32BE(offset);
