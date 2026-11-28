@@ -61,7 +61,7 @@ const SPECS: Record<Resource, ResourceSpec> = {
     table: "engineering_documents", label: "engineering document",
     fields: [
       field("project_id","uuid"),field("asset_id","uuid"),field("title","text",true),
-      field("kind","choice",true,0,["drawing","spec","bom","manual","sop","plc","hmi","other"]),
+      field("kind","choice",true,0,["drawing","spec","bom","manual","sop","plc","hmi","electrical_schematic","mechanical_schematic","other"]),
     ],
     read: "SELECT d.*,p.code AS project_code,a.asset_tag, (SELECT COUNT(*)::int FROM engineering_revisions r WHERE r.document_id=d.id) AS revisions, (SELECT max(revision) FROM engineering_revisions r WHERE r.document_id=d.id AND r.status='approved') AS approved_revision FROM engineering_documents d LEFT JOIN projects p ON p.id=d.project_id LEFT JOIN engineering_assets a ON a.id=d.asset_id ORDER BY d.created_at DESC LIMIT 200",
   },
