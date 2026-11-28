@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { formatDisplayLabel } from "@/lib/display-label";
 
 type Row = Record<string, unknown>;
 type User = { id: string; displayName: string; role: "admin" | "operator" | "viewer" };
@@ -479,7 +480,7 @@ export default function EquipmentWorkspace() {
             <ol className="mt-3 space-y-2 text-xs">
               {(selectedEquipmentDetail?.relationships ?? []).map((entry) => <li key={`${String(entry.kind)}-${String(entry.id)}`}
                 className="flex flex-wrap justify-between gap-2 border-b pb-2">
-                <span><strong>{String(entry.kind).replaceAll("_"," ")}</strong> · {String(entry.label)} · {String(entry.detail)}</span>
+                <span><strong>{formatDisplayLabel(String(entry.kind))}</strong> · {String(entry.label)} · {String(entry.detail)}</span>
                 <time dateTime={String(entry.occurred_at)} className="text-slate-500">{format(entry.occurred_at)}</time>
               </li>)}
               {!selectedEquipmentDetail?.relationships.length && <li className="text-slate-500">No linked project, engineering, production, or field-service records yet.</li>}
@@ -905,7 +906,7 @@ export default function EquipmentWorkspace() {
           <h3 className="mb-2 text-sm font-bold">Maintenance work-order history</h3>
           <ol className="space-y-1 text-xs">
             {selectedEvents.map((event) => <li key={String(event.id)} className="border-l-2 border-slate-300 py-1 pl-3">
-              {String(event.eventType).replaceAll("_"," ")} · {format(event.createdAt)} · {String(event.actor)}
+              {formatDisplayLabel(String(event.eventType))} · {format(event.createdAt)} · {String(event.actor)}
             </li>)}
           </ol>
         </section>
