@@ -7,8 +7,8 @@ documented backup/restore testing, and production acceptance remain outstanding.
 
 ## Architecture
 
-One CloudForge application container and one PostgreSQL 18 database in a private
-Docker Compose network. Database storage is a named persistent volume, not an
+One CloudForge web container, one short-lived privileged schema-migration
+container, and one PostgreSQL 18 database in a private Docker Compose network. Database storage is a named persistent volume, not an
 ephemeral container filesystem. A local reverse proxy supplies HTTPS and the
 site origin is configured explicitly; Railway, Squarespace, and internet access
 are not required at runtime.
@@ -22,8 +22,11 @@ cross-organization isolation. Do not remove it to serve multiple customers.
 1. Use a current patched host with Docker Engine + Docker Compose v2.
    Restrict host administrative access, physical ports and backup access.
 2. Create local `secrets/` next to `compose.yaml`. It is ignored by Git and Docker build.
-3. Store a cryptographically random **24+ character** database password in
-   `secrets/postgres_password.txt`.
+3. Store two **different cryptographically random 24+ character** database passwords in
+   `secrets/postgres-admin-password.txt` (schema migrator only) and
+   `secrets/postgres-app-password.txt` (the web app). The web application is
+   configured as PostgreSQL `cloudforge_app` with `NOSUPERUSER NOBYPASSRLS`
+   privileges; never give it the schema-owner password.
 4. Store the **Ed25519 PUBLIC** verification key (PEM) in
    `secrets/license-public-key.pem`. The corresponding PRIVATE license signing
    key must **never** be installed on this server.
@@ -52,6 +55,21 @@ Open the configured origin; use the one-time administrator setup flow and
 remove the bootstrap token after setup. Confirm login, read/write stock
 transactions, project creation, and safe PLC/HMI file download/upload against
 non-customer sample files. Do not connect production machinery during tests.
+
+
+### Database role boundary
+
+`cloudforge-migrate` applies migrations using the separately protected
+`cloudforge_admin` database password and provisions a restricted
+`cloudforge_app` role. The web container receives only the latter credential;
+it cannot run administrative schema migrations or bypass PostgreSQL row-level
+security as a superuser. The database volume remains persistent across restarts.
+
+Do not enable the `CLOUDFORGE_MULTI_ORGANIZATION_ENABLED` production flag
+until every API path, file repository, license policy, and industrial gateway
+isolation test is green and the database role has been confirmed
+`NOSUPERUSER NOBYPASSRLS`. The app readiness check is an additional
+fail-closed protection and does not replace a complete security review.
 
 ## Air-gapped installation
 
