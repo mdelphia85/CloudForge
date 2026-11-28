@@ -4,7 +4,7 @@ import {
   type Actors, type Handlers,
 } from "./harness";
 import * as context from "@/app/api/auth/organization/route";
-import { getAuthenticatedUser } from "@/server/auth";
+import { getAuthenticatedUser, switchSessionOrganization } from "@/server/auth";
 
 let h: Handlers;
 let actors: Actors;
@@ -77,4 +77,18 @@ it("fails closed when an organization membership is removed", async () => {
   expect(await getAuthenticatedUser(new Request(ORIGIN, { headers: { cookie: actors.viewer.cookie } }))).toBeNull();
   const list = await call(context.GET, { cookie: actors.viewer.cookie });
   expect(list.status).toBe(401);
+});
+
+it("rejects unverified MFA sessions before organization switching", async () => {
+  await testPool().query("UPDATE users SET mfa_enabled=true WHERE email=$1",[actors.operator.email]);
+  try {
+    const request=new Request(ORIGIN,{headers:{cookie:actors.operator.cookie}});
+    await expect(switchSessionOrganization(request,organizationId)).rejects.toMatchObject({
+      status:401,code:"UNAUTHENTICATED",
+    });
+    const result=await call(context.POST,{method:"POST",cookie:actors.operator.cookie,body:{organizationId}});
+    expect(result.status).toBe(401);
+  } finally {
+    await testPool().query("UPDATE users SET mfa_enabled=false WHERE email=$1",[actors.operator.email]);
+  }
 });
