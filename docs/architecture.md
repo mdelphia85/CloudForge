@@ -130,3 +130,46 @@ Produce a signed release bundle containing container images, SBOM, migration fil
 5. Complete deployment manifests, signed air-gapped release bundles, security scans, and operational runbooks.
 6. Add the next ERP domains on the established authorization, audit, and data boundaries.
 7. Perform a formal control mapping and independent assessment for the target contract and environment.
+
+
+## Platform-owner signed license issuance (draft foundation only)
+
+License issuing is a **separate platform-owner operation**. The Ed25519 private signing key
+must never be deployed to the CloudForge server, Railway, customer on-premises installations,
+air-gapped machines, or version control. The customer installation needs only the public
+verification key (`LICENSE_PUBLIC_KEY`).
+
+To issue an individual organization's license, securely generate and retain a private/public
+Ed25519 key pair on an authorized owner workstation. Protect the private key with restrictive
+permissions (0600 on POSIX, explicit restricted NTFS ACLs on Windows), an offline backup,
+and an appropriate key rotation/revocation plan.
+
+Prepare a request JSON file with these fields (using the actual organization UUID):
+
+```json
+{
+  "organizationId": "12345678-1234-4234-8234-123456789abc",
+  "licenseType": "air_gapped",
+  "tier": "professional",
+  "seatLimit": 25,
+  "modules": ["inventory", "projects", "engineering", "equipment", "field_service"],
+  "expiresAt": "2028-01-01T00:00:00.000Z"
+}
+```
+
+On a secured platform-owner workstation only:
+
+```sh
+CLOUDFORGE_LICENSE_SIGNING_KEY_FILE=/secure/ed25519-private.pem node scripts/issue-license.mjs license-request.json signed-license.json
+```
+
+The issuer generates a distinct license UUID and signature, creates a new file rather than
+overwriting an old license, and prints no private key. Transfer **only** the signed license
+JSON to the intended customer installation. An authorized platform owner may install
+it through the platform-license UI. Never email or upload the private key.
+
+**This is foundation tooling, not commercial licensing enforcement.** The application still
+does not enforce seats, modules, time validity, organization suspension, or tenant isolation
+on operational API routes. The singleton organization constraint remains in place. Do not
+onboard multiple independent cloud tenants or merge this draft PR until the full authorization
+and license enforcement requirements have been implemented and tested.
