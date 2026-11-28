@@ -31,6 +31,13 @@ const env = {
   NEXT_PUBLIC_APP_URL: process.env.APP_ORIGIN,
   NODE_ENV: "production",
 };
+if (process.env.CLOUDFORGE_MFA_ENCRYPTION_KEY_FILE) {
+  const mfaKey=readSecret(process.env.CLOUDFORGE_MFA_ENCRYPTION_KEY_FILE,"MFA encryption key");
+  if(!/^[0-9a-fA-F]{64}$/.test(mfaKey)) {
+    throw new Error("MFA encryption key must be 32 random bytes encoded as 64 hex digits.");
+  }
+  env.CLOUDFORGE_MFA_ENCRYPTION_KEY=mfaKey;
+}
 if (process.env.BOOTSTRAP_ADMIN_TOKEN_FILE) {
   env.BOOTSTRAP_ADMIN_TOKEN = readSecret(process.env.BOOTSTRAP_ADMIN_TOKEN_FILE, "Bootstrap token");
 }
