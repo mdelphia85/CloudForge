@@ -1,4 +1,3 @@
-import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
@@ -23,7 +22,6 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withOrganizationRoute(handleGET);
 
 async function handlePOST(request: Request) {
   try {
