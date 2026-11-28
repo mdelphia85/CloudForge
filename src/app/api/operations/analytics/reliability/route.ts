@@ -1,9 +1,10 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse } from "@/server/errors";
 import { getReliabilityAnalytics } from "@/server/phase4/analytics";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const user = await requireUser(request);
     const url = new URL(request.url);
@@ -16,3 +17,5 @@ export async function GET(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);

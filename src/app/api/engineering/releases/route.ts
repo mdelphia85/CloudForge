@@ -1,9 +1,10 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { getPool } from "@/server/db";
 import { errorResponse } from "@/server/errors";
 
-export async function GET(request:Request) {
+async function handleGET(request:Request) {
   try {
     await requireUser(request);
     const result=await getPool().query(
@@ -18,3 +19,5 @@ export async function GET(request:Request) {
     return NextResponse.json({releases:result.rows},{headers:{"Cache-Control":"no-store"}});
   } catch(error) {return errorResponse(error);}
 }
+
+export const GET = withOrganizationRoute(handleGET);

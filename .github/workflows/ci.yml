@@ -92,3 +92,61 @@ jobs:
           cache: npm
       - run: npm audit --omit=dev --audit-level=high
       - run: npm audit --prefix gateway --omit=dev --audit-level=high
+
+  onprem:
+    name: On-premises container and database-role smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare ephemeral test secrets
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p secrets
+          openssl rand -hex 32 > secrets/postgres-admin-password.txt
+          openssl rand -hex 32 > secrets/postgres-app-password.txt
+          openssl rand -hex 32 > secrets/bootstrap-admin-token.txt
+          openssl genpkey -algorithm Ed25519 -out /tmp/cloudforge-ci-private.pem
+          openssl pkey -in /tmp/cloudforge-ci-private.pem -pubout -out secrets/license-public-key.pem
+          rm -f /tmp/cloudforge-ci-private.pem
+      - name: Build and launch disposable on-premises stack
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          docker compose build
+          docker compose up -d --no-build
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health/ready >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --show-error --silent http://127.0.0.1:3000/api/health/ready
+      - name: Verify restricted app database role and first administrator
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          role_flags=$(docker compose exec -T postgres sh -c \
+            'PGPASSWORD=$(cat /run/secrets/postgres_admin_password) psql -U cloudforge_admin -d cloudforge -Atc "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname='\''cloudforge_app'\''"')
+          test "$role_flags" = "f|f"
+          token=$(cat secrets/bootstrap-admin-token.txt)
+          status=$(curl --silent --show-error -o /tmp/cloudforge-bootstrap.json -w '%{http_code}' \
+            -H 'Origin: http://localhost:3000' \
+            -H 'Content-Type: application/json' \
+            --data "{\"bootstrapToken\":\"$token\",\"email\":\"ci-owner@example.test\",\"displayName\":\"CI Owner\",\"password\":\"Strong-CI-Account-2026!\"}" \
+            http://127.0.0.1:3000/api/auth/bootstrap)
+          test "$status" = "201"
+          grep -q '"role":"admin"' /tmp/cloudforge-bootstrap.json
+      - name: Diagnostic logs on failure
+        if: failure()
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: docker compose logs --tail=80
+      - name: Remove disposable containers and test volumes
+        if: always()
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: docker compose down -v --remove-orphans

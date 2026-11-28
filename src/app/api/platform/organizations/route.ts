@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
 import { errorResponse } from "@/server/errors";
 import { requirePlatformOwner } from "@/server/platform-owner";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const actor = await requireUser(request);
     const organizations = await inTransaction(async (client) => {
@@ -20,3 +21,5 @@ export async function GET(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);

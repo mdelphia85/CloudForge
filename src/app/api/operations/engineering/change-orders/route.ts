@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, readJson, requireSameOrigin } from "@/server/errors";
 import { operationsError, requireUuid } from "@/server/operations";
 import { createChangeOrder, listChangeOrders } from "@/server/phase3/engineering";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     await requireUser(request);
     const projectId = new URL(request.url).searchParams.get("projectId");
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -27,3 +28,6 @@ export async function POST(request: Request) {
     return errorResponse(operationsError(error));
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

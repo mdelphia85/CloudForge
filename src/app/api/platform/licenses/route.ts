@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
@@ -17,7 +18,7 @@ function licenseError(error: unknown): Response {
   return errorResponse(error);
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const actor = await requireUser(request);
     const organizationId = requireUuid(new URL(request.url).searchParams.get("organizationId"), "organization ID");
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const actor = await requireUser(request);
@@ -83,3 +84,6 @@ export async function POST(request: Request) {
     return licenseError(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

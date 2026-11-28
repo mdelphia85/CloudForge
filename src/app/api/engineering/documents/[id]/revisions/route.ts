@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
@@ -8,7 +9,7 @@ import { audit, operationsError, requireUuid, shortText } from "@/server/operati
 type Context={params:Promise<{id:string}>};
 const MAX_UPLOAD_BYTES=15*1024*1024;
 
-export async function GET(request:Request,{params}:Context) {
+async function handleGET(request:Request,{params}:Context) {
   try {
     await requireUser(request);
     const {id}=await params;
@@ -23,7 +24,7 @@ export async function GET(request:Request,{params}:Context) {
   } catch(error) {return errorResponse(error);}
 }
 
-export async function POST(request:Request,{params}:Context) {
+async function handlePOST(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -72,3 +73,6 @@ export async function POST(request:Request,{params}:Context) {
     return NextResponse.json(result,{status:201});
   } catch(error) { return errorResponse(operationsError(error)); }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

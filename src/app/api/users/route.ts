@@ -1,17 +1,21 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { hashPassword, isValidPassword } from "@/server/password";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const actor = await requireUser(request);
     requireRole(actor, "admin");
     const users = await inTransaction(async (client) => {
       const result = await client.query(
-        `SELECT id, email, display_name AS "displayName", role, is_active AS "isActive"
-         FROM users ORDER BY display_name, id`,
+        `SELECT u.id, u.email, u.display_name AS "displayName",
+                m.role, u.is_active AS "isActive"
+         FROM users u JOIN organization_memberships m ON m.user_id=u.id
+         WHERE m.organization_id=$1 ORDER BY u.display_name,u.id`,
+        [actor.organizationId],
       );
       return result.rows;
     });
@@ -21,11 +25,17 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const actor = await requireUser(request);
     requireRole(actor, "admin");
+    // Until invitations and per-organization account provisioning are complete,
+    // never create globally scoped user accounts from a shared SaaS organization.
+    if (process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED === "true") {
+      throw new HttpError(409, "INVITATIONS_REQUIRED",
+        "Organization-scoped invitations are required before adding users to shared SaaS.");
+    }
     const body = await readJson(request);
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
@@ -68,3 +78,6 @@ export async function POST(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, readJson, requireSameOrigin } from "@/server/errors";
 import { operationsError } from "@/server/operations";
 import { createSupplier, listSuppliers } from "@/server/phase3/purchasing";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     await requireUser(request);
     return NextResponse.json({ suppliers: await listSuppliers() }, { headers: { "Cache-Control": "no-store" } });
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -23,3 +24,6 @@ export async function POST(request: Request) {
     return errorResponse(operationsError(error));
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

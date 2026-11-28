@@ -5,47 +5,67 @@ services:
     image: postgres:18
     restart: unless-stopped
     environment:
-      POSTGRES_USER: cloudforge
+      POSTGRES_USER: cloudforge_admin
       POSTGRES_DB: cloudforge
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
     secrets:
-      - postgres_password
+      - postgres_admin_password
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cloudforge -d cloudforge"]
+      test: ["CMD-SHELL", "pg_isready -U cloudforge_admin -d cloudforge"]
       interval: 10s
       timeout: 5s
       retries: 10
     networks:
       - internal
 
-  cloudforge:
+  cloudforge-migrate:
     image: cloudforge-onprem:local
     build:
       context: .
       dockerfile: Dockerfile
-    restart: unless-stopped
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DB_HOST: postgres
       DB_NAME: cloudforge
-      DB_USER: cloudforge
-      DB_PASSWORD_FILE: /run/secrets/postgres_password
+      DB_ADMIN_USER: cloudforge_admin
+      DB_APP_USER: cloudforge_app
+      DB_ADMIN_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      DB_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+    command: ["node", "deploy/onprem/migrate.mjs"]
+    networks:
+      - internal
+
+  cloudforge:
+    image: cloudforge-onprem:local
+    restart: unless-stopped
+    depends_on:
+      cloudforge-migrate:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_NAME: cloudforge
+      DB_APP_USER: cloudforge_app
+      DB_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
       LICENSE_PUBLIC_KEY_FILE: /run/secrets/license_public_key
       BOOTSTRAP_ADMIN_TOKEN_FILE: /run/secrets/bootstrap_token
       APP_ORIGIN: ${APP_ORIGIN:?Set an exact HTTP or HTTPS application origin}
       NODE_ENV: production
       PORT: 3000
     secrets:
-      - postgres_password
+      - postgres_app_password
       - license_public_key
       - bootstrap_token
     command: ["node", "deploy/onprem/entrypoint.mjs"]
     ports:
-      # Keep on loopback by default; expose LAN access through a separately managed TLS reverse proxy.
+      # Bind loopback by default; LAN access uses a customer-managed TLS reverse proxy.
       - "${CLOUDFORGE_BIND:-127.0.0.1}:${CLOUDFORGE_PORT:-3000}:3000"
     networks:
       - internal
@@ -58,8 +78,10 @@ networks:
     internal: false
 
 secrets:
-  postgres_password:
-    file: ./secrets/postgres_password.txt
+  postgres_admin_password:
+    file: ./secrets/postgres-admin-password.txt
+  postgres_app_password:
+    file: ./secrets/postgres-app-password.txt
   license_public_key:
     file: ./secrets/license-public-key.pem
   bootstrap_token:
