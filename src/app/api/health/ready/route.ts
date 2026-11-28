@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/server/db";
+import { engineeringScannerReady } from "@/server/engineering-file-security";
 
 export async function GET() {
   try {
@@ -31,6 +32,9 @@ export async function GET() {
       return NextResponse.json({status:"not_ready",service:"cloud-forge"},{status:503});
     }
     if (multiEnabled) {
+      if (!await engineeringScannerReady()) {
+        return NextResponse.json({status:"not_ready",service:"cloud-forge"},{status:503});
+      }
       if (process.env.CLOUDFORGE_LICENSE_ENFORCEMENT_REQUIRED!=="true" ||
           process.env.CLOUDFORGE_MFA_REQUIRED!=="true" ||
           !/^[0-9a-fA-F]{64}$/.test(process.env.CLOUDFORGE_MFA_ENCRYPTION_KEY ?? "")) {
