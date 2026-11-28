@@ -157,7 +157,7 @@ export async function createEquipment(body: Record<string, unknown>, user: Authe
         input.hmiMake,input.hmiModel,input.notes,input.manufacturer,input.model,input.serialNumber,input.location,
         input.installedOn,input.status,input.parentAssetId,user.id],
     );
-    await initializeSimulatedTelemetry(client, created.rows[0].id, user.id);
+    await initializeSimulatedTelemetry(client, created.rows[0].id, user.id, user.organizationId);
     await audit(client, user, "equipment.created", "engineering_asset", created.rows[0].id, {
       assetTag: input.assetTag, projectId: input.projectId, parentAssetId: input.parentAssetId,
     });
