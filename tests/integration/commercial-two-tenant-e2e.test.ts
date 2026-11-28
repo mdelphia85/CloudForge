@@ -9,6 +9,7 @@ import {
 } from "./harness";
 import { hashPassword } from "@/server/password";
 import * as inventory from "@/app/api/inventory/route";
+import * as reorder from "@/app/api/inventory/reorder/route";
 import * as resources from "@/app/api/operations/[resource]/route";
 import * as overview from "@/app/api/operations/overview/route";
 import * as uploader from "@/app/api/engineering/uploads/route";
@@ -247,4 +248,32 @@ it("blocks cross-organization engineering file downloads even when IDs are known
   });
   expect(bReleases.status).toBe(200);
   expect(bReleases.body.releases).toEqual([]);
+});
+
+it("keeps automatic replenishment requests separate under the restricted multi-company database role",async()=>{
+  const path="/api/inventory/reorder";
+  const enable=(cookie:string,qty:string)=>call(reorder.PATCH,{
+    method:"PATCH",path,cookie,body:{
+      sku:sameSku,enabled:true,reorderPoint:"25",replenishQuantity:qty,
+    },
+  });
+  const forA=await enable(a.admin.cookie,"15");
+  const forB=await enable(bCookie,"22");
+  expect(forA.status,JSON.stringify(forA.body)).toBe(200);
+  expect(forB.status,JSON.stringify(forB.body)).toBe(200);
+  expect(forA.body.createdRequestId).toBeTruthy();
+  expect(forB.body.createdRequestId).toBeTruthy();
+  expect(forA.body.createdRequestId).not.toBe(forB.body.createdRequestId);
+
+  const [aQueue,bQueue]=await Promise.all([
+    call(reorder.GET,{cookie:a.admin.cookie,path}),
+    call(reorder.GET,{cookie:bCookie,path}),
+  ]);
+  expect(aQueue.status).toBe(200);
+  expect(bQueue.status).toBe(200);
+  expect(aQueue.body.requests.map((row:{id:string})=>row.id)).toContain(forA.body.createdRequestId);
+  expect(aQueue.body.requests.map((row:{id:string})=>row.id)).not.toContain(forB.body.createdRequestId);
+  expect(bQueue.body.requests.map((row:{id:string})=>row.id)).toContain(forB.body.createdRequestId);
+  expect(bQueue.body.requests.map((row:{id:string})=>row.id)).not.toContain(forA.body.createdRequestId);
+  expect((await testPool().query("SELECT 1 FROM purchase_orders")).rowCount).toBe(0);
 });

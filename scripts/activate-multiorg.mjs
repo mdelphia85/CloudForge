@@ -34,6 +34,7 @@ const expectedMigrations=[
   "014_session_organization_binding.sql","015_cross_organization_references.sql",
   "016_tenant_row_security.sql","017_organization_business_keys.sql",
   "018_explicit_memberships_and_invitations.sql",
+  "019_inventory_auto_reorder.sql",
 ];
 const pool=new pg.Pool({connectionString,max:1});
 const client=await pool.connect();
