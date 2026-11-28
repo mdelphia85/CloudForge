@@ -64,6 +64,9 @@ it("fails closed for a commercial file when the internal scanner is absent",asyn
 
 it("streams original bytes and rejects infected or malformed scanner responses",async()=>{
   const payload=Buffer.alloc(130000,42);
+  const command=Buffer.from("zINSTREAM\0");
+  const frameCount=Math.ceil(payload.length/(64*1024));
+  const expectedLength=command.length+payload.length+4*(frameCount+1);
   for(const [response,expected] of [
     ["stream: OK\0",null],
     ["stream: Test.Signature FOUND\0","ENGINEERING_FILE_REJECTED"],
@@ -71,9 +74,10 @@ it("streams original bytes and rejects infected or malformed scanner responses",
   ] as const) {
     let received=Buffer.alloc(0);
     const server=createServer(socket=>{
+      socket.setTimeout(3000,()=>socket.destroy());
       socket.on("data",chunk=>{
         received=Buffer.concat([received,chunk]);
-        if(received.length===9+payload.length+8+4)socket.end(response);
+        if(received.length===expectedLength)socket.end(response);
       });
     });
     server.listen(0,"127.0.0.1");
@@ -86,8 +90,8 @@ it("streams original bytes and rejects infected or malformed scanner responses",
       process.env.CLOUDFORGE_CLAMAV_PORT=String(address.port);
       if(expected)await expect(scanEngineeringFile(payload)).rejects.toMatchObject({code:expected});
       else await expect(scanEngineeringFile(payload)).resolves.toBeUndefined();
-      expect(received.subarray(0,9).toString()).toBe("zINSTREAM\0");
-      let offset=9;
+      expect(received.subarray(0,command.length)).toEqual(command);
+      let offset=command.length;
       const chunks:Buffer[]=[];
       while(offset<received.length){
         const length=received.readUInt32BE(offset);
