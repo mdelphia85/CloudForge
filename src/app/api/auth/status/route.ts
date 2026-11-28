@@ -13,6 +13,7 @@ export async function GET(request: Request) {
       setupRequired: users.rows[0].count === "0",
       setupEnabled: bootstrapTokenConfigured(),
       user,
+      ...(process.env.CLOUDFORGE_MFA_REQUIRED==="true" ? {mfaRequired:true} : {}),
     });
   } catch (error) {
     return errorResponse(error);
