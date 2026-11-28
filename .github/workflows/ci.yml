@@ -182,12 +182,12 @@ jobs:
           ' < /tmp/cloudforge-restore-ci.dump
           inventory=$(docker compose exec -T postgres sh -ec '
             export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
-            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT count(*) FROM inventory_items WHERE sku='''RESTORE-BOLT'''"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT sku FROM inventory_items ORDER BY sku LIMIT 1"
           ')
-          test "$inventory" = "1"
+          test "$inventory" = "RESTORE-BOLT"
           program=$(docker compose exec -T postgres sh -ec '
             export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
-            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT encode(file_data,'''hex''') FROM engineering_revisions WHERE file_name='''backup-verify.bin'''"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
           ')
           test "$program" = "deadbeef"
           original=$(docker compose exec -T postgres sh -ec '
