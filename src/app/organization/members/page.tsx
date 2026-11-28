@@ -62,6 +62,30 @@ export default function OrganizationMembersPage() {
     finally{setBusy(false);}
   }
 
+  async function changeRole(userId:string,role:string) {
+    setBusy(true);setError("");setNotice("");setInviteLink("");
+    try {
+      await json("/api/organizations/members/"+userId,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({role}),
+      });
+      setNotice("Organization role updated. Sessions in this organization were revoked.");
+      await refresh();
+    }catch(e){setError(e instanceof Error?e.message:"Unable to change member role.");}
+    finally{setBusy(false);}
+  }
+
+  async function removeMember(userId:string,email:string) {
+    if(!window.confirm("Remove "+email+" from this organization? Their other organizations will be unaffected."))return;
+    setBusy(true);setError("");setNotice("");setInviteLink("");
+    try {
+      await json("/api/organizations/members/"+userId,{method:"DELETE"});
+      setNotice("Member access was revoked for this organization.");
+      await refresh();
+    }catch(e){setError(e instanceof Error?e.message:"Unable to remove member.");}
+    finally{setBusy(false);}
+  }
+
   return <main className="min-h-screen bg-slate-100 text-slate-800 p-4 md:p-8">
     <div className="max-w-5xl mx-auto space-y-5">
       <header className="rounded-xl bg-white border p-5 flex flex-wrap gap-4 justify-between items-center">
@@ -101,10 +125,23 @@ export default function OrganizationMembersPage() {
       <section className="rounded-xl bg-white border p-5 overflow-x-auto">
         <h2 className="font-bold text-lg mb-3">Current Members ({users.length})</h2>
         <table className="w-full text-sm"><thead><tr className="text-left border-b">
-          <th className="p-2">Name</th><th className="p-2">Email</th><th className="p-2">Role</th><th className="p-2">Account</th>
+          <th className="p-2">Name</th><th className="p-2">Email</th><th className="p-2">Role</th><th className="p-2">Account</th><th className="p-2">Actions</th>
         </tr></thead><tbody>{users.map(user=><tr key={user.id} className="border-b">
           <td className="p-2">{user.displayName}</td><td className="p-2">{user.email}</td>
-          <td className="p-2">{user.role}</td><td className="p-2">{user.isActive?"Active":"Disabled"}</td>
+          <td className="p-2">
+            <select aria-label={"Role for "+user.email} value={user.role} disabled={busy}
+              onChange={event=>void changeRole(user.id,event.target.value)}
+              className="border rounded-md p-2 bg-white">
+              <option value="viewer">Viewer</option>
+              <option value="operator">Operator</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </td>
+          <td className="p-2">{user.isActive?"Active":"Disabled"}</td>
+          <td className="p-2">
+            <button type="button" disabled={busy} className="text-rose-700 underline font-semibold disabled:opacity-40"
+              onClick={()=>void removeMember(user.id,user.email)}>Remove access</button>
+          </td>
         </tr>)}</tbody></table>
       </section>
       <section className="rounded-xl bg-white border p-5 overflow-x-auto">
