@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, requireSameOrigin } from "@/server/errors";
@@ -6,7 +7,7 @@ import { releaseReservation } from "@/server/phase3/materials";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function DELETE(request: Request, { params }: Context) {
+async function handleDELETE(request: Request, { params }: Context) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -17,3 +18,5 @@ export async function DELETE(request: Request, { params }: Context) {
     return errorResponse(operationsError(error));
   }
 }
+
+export const DELETE = withOrganizationRoute(handleDELETE);

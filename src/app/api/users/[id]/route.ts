@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
@@ -6,7 +7,7 @@ import { requireUuid } from "@/server/operations";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function PATCH(request: Request, { params }: Context) {
+async function handlePATCH(request: Request, { params }: Context) {
   try {
     requireSameOrigin(request);
     const actor = await requireUser(request);
@@ -63,3 +64,5 @@ export async function PATCH(request: Request, { params }: Context) {
     return errorResponse(error);
   }
 }
+
+export const PATCH = withOrganizationRoute(handlePATCH);
