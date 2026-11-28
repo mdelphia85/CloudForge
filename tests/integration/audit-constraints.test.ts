@@ -202,6 +202,7 @@ describe("migrations", () => {
       "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",
       "maintenance_work_order_cost_events", "maintenance_work_order_events", "maintenance_work_order_parts",
       "maintenance_work_orders",
+      "organization_invitations",
       "organization_license_events", "organization_licenses", "organization_memberships", "organizations", "platform_owner_events", "platform_owners",
       "production_downtime", "production_events", "production_job_assignments", "production_jobs",
       "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",
