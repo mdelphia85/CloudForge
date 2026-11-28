@@ -276,7 +276,7 @@ export default function OperationsWorkspace(){
           <h1 className="text-2xl font-bold">{MODULES[active].label}</h1>
           <p className="text-xs text-slate-500 mt-1">{MODULES[active].description}</p></div>
         <div className="flex gap-2"><Button tone="ghost" onClick={()=>void perform(refresh,"Workspace refreshed.")} disabled={busy}><RefreshCcw size={14}/> Refresh</Button>
-          {editable&&active!=="documents"&&<Button onClick={()=>setShowForm(v=>!v)} disabled={busy}><Plus size={15}/> New record</Button>}</div>
+          {editable&&<Button onClick={()=>setShowForm(v=>!v)} disabled={busy}><Plus size={15}/> {active==="documents"?"Other Document Record":"New record"}</Button>}</div>
       </header>
 
       <div className="p-5 lg:p-9 max-w-[1600px] mx-auto space-y-6">
