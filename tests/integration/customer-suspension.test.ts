@@ -55,7 +55,7 @@ it("suspends and reactivates only the selected customer while preserving audit e
   expect(reactivated.status).toBe(200);
   expect(reactivated.body.organization.status).toBe("active");
   const events=await testPool().query<{action:string}>(
-    "SELECT action FROM audit_events WHERE entity_id=$1 ORDER BY created_at",
+    "SELECT action FROM audit_events WHERE entity_id=$1 ORDER BY occurred_at",
     [orgB],
   );
   expect(events.rows.map(row=>row.action)).toEqual([
