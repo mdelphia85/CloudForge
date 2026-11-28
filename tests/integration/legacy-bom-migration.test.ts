@@ -215,6 +215,10 @@ describe("Phase 2 BOM migration provenance", () => {
     const newUser = await testPool().query<{ id: string }>(
       "INSERT INTO users(email,display_name,password_hash,role) VALUES('new@example.test','New user','unused','viewer') RETURNING id",
     );
-    expect((await testPool().query("SELECT role FROM organization_memberships WHERE user_id=$1", [newUser.rows[0].id])).rows[0].role).toBe("viewer");
+    // Commercial invitations must explicitly grant membership. Raw account creation
+    // must never automatically add a user to another customer's organization.
+    expect((await testPool().query(
+      "SELECT 1 FROM organization_memberships WHERE user_id=$1", [newUser.rows[0].id],
+    )).rows).toEqual([]);
   });
 });
