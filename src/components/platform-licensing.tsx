@@ -77,6 +77,26 @@ export default function PlatformLicensing() {
     }
   }
 
+  async function changeOrganizationStatus(action:"suspend"|"reactivate") {
+    if (!selected) return;
+    const organization=organizations.find(item=>item.id===selected);
+    if (!organization) return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      const updated=await request<{organization:{id:string;status:string}}>(
+        "/api/platform/organizations/"+encodeURIComponent(selected),{
+          method:"PATCH",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({action}),
+        },
+      );
+      setOrganizations(existing=>existing.map(item=>item.id===selected
+        ? {...item,status:updated.organization.status} : item));
+      setNotice("Organization status changed to "+updated.organization.status+
+        ". Licensed modules remain subject to server-side access checks.");
+    }catch(reason){setError(reason instanceof Error?reason.message:"Organization status could not be changed.");}
+    finally{setBusy(false);}
+  }
+
   async function createOrganization(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form=event.currentTarget;
@@ -163,6 +183,23 @@ export default function PlatformLicensing() {
         </select>
       </label>
       {selected && <>
+        <section className="rounded border p-4 text-sm space-y-3">
+          <h2 className="font-bold">Customer Organization Status</h2>
+          <p>Status: <strong>{organizations.find(org=>org.id===selected)?.status ?? "Unknown"}</strong></p>
+          <p className="text-xs text-slate-600">
+            Suspending an organization blocks its users from operational access without affecting other customers.
+            The original platform recovery organization cannot be suspended.
+          </p>
+          {organizations.find(org=>org.id===selected)?.status==="active"
+            ? <button type="button" disabled={busy} onClick={()=>void changeOrganizationStatus("suspend")}
+                className="rounded-md border border-rose-300 text-rose-700 font-semibold px-3 py-2 disabled:opacity-40">
+                Suspend Organization
+              </button>
+            : <button type="button" disabled={busy} onClick={()=>void changeOrganizationStatus("reactivate")}
+                className="rounded-md bg-teal-700 text-white font-semibold px-3 py-2 disabled:opacity-40">
+                Reactivate Organization
+              </button>}
+        </section>
         <section className="rounded border p-4 text-sm">
           <h2 className="font-bold">Installed license</h2>
           {license ? <div className="mt-2 space-y-1">
