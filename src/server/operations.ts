@@ -145,15 +145,33 @@ function parseValue(value: unknown, rule: Field): unknown {
 
 export async function audit(client: PoolClient, user: AuthenticatedUser, action: string, entityType: string, entityId: string, details: Record<string, unknown> = {}) {
   await client.query(
-    "INSERT INTO audit_events (actor_user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5::jsonb)",
-    [user.id,action,entityType,entityId,JSON.stringify(details)],
+    "INSERT INTO audit_events (actor_user_id,organization_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5,$6::jsonb)",
+    [user.id,user.organizationId,action,entityType,entityId,JSON.stringify(details)],
   );
 }
 
+// All operational overview lists must be filtered by the organization derived
+// from the authenticated session, never by an unverified request parameter.
+const RESOURCE_ALIAS: Record<Resource,string> = {
+  projects:"p",tasks:"t",assets:"a",bom:"b",documents:"d",
+  production:"j",purchasing:"r",service:"s",
+};
+
 export async function listResource(resource: Resource, user: AuthenticatedUser): Promise<Record<string,unknown>[]> {
-  const result = resource === "service"
-    ? await getPool().query(SPECS[resource].read, [user.role === "viewer" ? user.id : null])
-    : await getPool().query(SPECS[resource].read);
+  const read=SPECS[resource].read;
+  const alias=RESOURCE_ALIAS[resource];
+  const order=read.lastIndexOf(" ORDER BY ");
+  if(order<0) throw new Error("Unscoped resource query cannot be executed.");
+  const prefix=read.slice(0,order);
+  const suffix=read.slice(order);
+  // service already has $1 for assigned technician. Other reads have no placeholders.
+  const sql=resource==="service"
+    ? prefix+" AND s.organization_id=$2"+suffix
+    : prefix+" WHERE "+alias+".organization_id=$1"+suffix;
+  const parameters=resource==="service"
+    ? [user.role==="viewer"?user.id:null,user.organizationId]
+    : [user.organizationId];
+  const result=await getPool().query(sql,parameters);
   return result.rows;
 }
 export async function listOverview(user: AuthenticatedUser): Promise<Record<Resource,Record<string,unknown>[]>> {
@@ -184,10 +202,48 @@ export async function createResource(resource: Resource, payload: Record<string,
     const skuAt = spec.fields.findIndex(x=>x.key==="sku");
     if (skuAt >= 0) {
       const i = fields.indexOf("item_id");
-      const item = await client.query<{id:string}>("SELECT id FROM inventory_items WHERE sku = $1 AND is_active=true",[values[i]]);
+      const item = await client.query<{id:string}>("SELECT id FROM inventory_items WHERE sku = $1 AND organization_id=$2 AND is_active=true",[values[i],user.organizationId]);
       if (!item.rowCount) throw new HttpError(400,"SKU_NOT_FOUND","Add the SKU to inventory first.");
       values[i]=item.rows[0].id;
     }
+    // Verify every cross-record association is inside the active organization.
+    const ownerReferences=new Set(["owner_user_id","assignee_id","assigned_to"]);
+    const entityReferences: Record<string,string> = {
+      project_id:"projects",asset_id:"engineering_assets",
+    };
+    for (let index=0;index<fields.length;index++) {
+      const key=fields[index],reference=values[index];
+      if (reference===undefined || reference===null) continue;
+      const table=entityReferences[key];
+      if (table) {
+        const found=await client.query(
+          "SELECT 1 FROM "+table+" WHERE id=$1 AND organization_id=$2",
+          [reference,user.organizationId],
+        );
+        if (!found.rowCount) throw new HttpError(400,"INVALID_REFERENCE",
+          "The selected "+key+" does not belong to your organization.");
+      } else if (ownerReferences.has(key)) {
+        const found=await client.query(
+          "SELECT 1 FROM organization_memberships WHERE user_id=$1 AND organization_id=$2",
+          [reference,user.organizationId],
+        );
+        if (!found.rowCount) throw new HttpError(400,"INVALID_REFERENCE",
+          "The selected user does not belong to your organization.");
+      }
+    }
+    if (resource==="documents" && fields.includes("project_id") && fields.includes("asset_id")) {
+      const projectId=values[fields.indexOf("project_id")];
+      const assetId=values[fields.indexOf("asset_id")];
+      const check=await client.query<{project_id:string|null}>(
+        "SELECT project_id FROM engineering_assets WHERE id=$1 AND organization_id=$2",
+        [assetId,user.organizationId],
+      );
+      if (check.rows[0]?.project_id && check.rows[0].project_id!==projectId) {
+        throw new HttpError(400,"INVALID_REFERENCE","Equipment belongs to another project.");
+      }
+    }
+    fields.push("organization_id");
+    values.push(user.organizationId);
     fields.push(resource === "bom" ? "added_by" : "created_by");
     values.push(user.id);
     const columns = fields.join(",");
@@ -227,7 +283,7 @@ export async function updateStatus(resource: Resource, id: string, next: unknown
   if (!allowed || typeof next !== "string") throw new HttpError(400,"INVALID_STATUS","This status cannot be edited here.");
   return inTransaction(async client=>{
     const table = SPECS[resource].table;
-    const found = await client.query<{status:string}>("SELECT status FROM "+table+" WHERE id=$1 FOR UPDATE",[id]);
+    const found = await client.query<{status:string}>("SELECT status FROM "+table+" WHERE id=$1 AND organization_id=$2 FOR UPDATE",[id,user.organizationId]);
     if (!found.rowCount) throw new HttpError(404,"NOT_FOUND","Record not found.");
     const old=found.rows[0].status;
     if (old === next) return {id,status:old};
@@ -240,7 +296,7 @@ export async function updateStatus(resource: Resource, id: string, next: unknown
       );
       if (pending.rowCount) throw new HttpError(409,"DEPENDENCY_PENDING","Complete prerequisite tasks before marking this task done.");
     }
-    await client.query("UPDATE "+table+" SET status=$2"+(resource==="service"?"":",updated_at=now()")+" WHERE id=$1",[id,next]);
+    await client.query("UPDATE "+table+" SET status=$2"+(resource==="service"?"":",updated_at=now()")+" WHERE id=$1 AND organization_id=$3",[id,next,user.organizationId]);
     if (resource === "service") {
       await client.query(
         "INSERT INTO field_service_updates(service_job_id,update_type,status,notes,actor_id) " +
