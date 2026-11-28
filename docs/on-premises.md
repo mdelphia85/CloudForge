@@ -116,6 +116,25 @@ finished license-controlled product.
 - Document recovery time objectives, update windows, support access, incident
   response, retention, account recovery and key rotation per customer.
 
+## Automated recovery smoke test
+
+GitHub CI now builds the on-premises stack, creates the first admin account,
+adds sample inventory and an opaque PLC binary revision, takes a disposable
+PostgreSQL custom-format dump, and restores into a **different temporary
+database**. It verifies original migration versions, the inventory record,
+and the exact PLC binary bytes after restoration. Both databases are destroyed
+by the CI job. This test never reads production credentials or real customer
+records.
+
+This validates schema/data round-trip functionality only. **It does not make
+unencrypted production dumps acceptable** or prove disaster recovery readiness.
+Customer installations must use individually protected encrypted backups,
+retention and off-site copies governed by site policy; regularly conduct
+separate restore exercises, verify app login and engineering file checksums,
+and record recovery time and recovery point objectives. Keep signing keys
+outside the customer server and back up the public verification key and
+license information required for a restored installation.
+
 ## Blocking work before commercial customers
 
 - Strict cloud multi-organization isolation across **all** endpoints and links,
