@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import EngineeringUploadPanel from "@/components/engineering-upload-panel";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { formatDisplayLabel } from "@/lib/display-label";
 import { Boxes, LayoutDashboard, FolderKanban, Wrench, Factory, Package,
   ClipboardList, Truck, FileCode2, RefreshCcw, Plus, CheckCircle2, ChevronRight,
   ArrowLeft, AlertCircle, Download, UploadCloud, LogOut, ShieldCheck } from "lucide-react";
@@ -41,7 +43,7 @@ const MODULES:Record<Resource,Module>={
     fields:[field("project_id","Project",true,"select"),field("sku","Inventory SKU",true,"select"),
       field("required_qty","Required quantity",true,"number"),field("revision","Engineering revision"),
       field("notes","Notes",false,"textarea")]},
-  documents:{label:"Drawing & PLC/HMI library",description:"Controlled documents, upload history, release approvals, and field downloads",
+  documents:{label:"Drawing & PLC/HMI Library",description:"Controlled documents, upload history, release approvals, and field downloads",
     columns:["title","kind","project_code","asset_tag","revisions","approved_revision"],
     fields:[field("project_id","Project",false,"select"),field("asset_id","Equipment",false,"select"),
       field("title","Document / program title",true),
@@ -69,7 +71,9 @@ const transitions:Partial<Record<Resource,Record<string,string[]>>>={
   purchasing:{requested:["ordered","cancelled"],ordered:["received","cancelled"]},
   service:{open:["scheduled","in_progress"],scheduled:["in_progress","completed"],in_progress:["completed"]},
 };
-const titleize=(s:string)=>s.replace(/_/g," ").replace(/\b\w/g,m=>m.toUpperCase());
+const titleize=formatDisplayLabel;
+const engineeringKindLabel=(value:unknown)=>value==="electrical_schematic"?"Electrical Schematics":
+  value==="mechanical_schematic"?"Mechanical Schematics":titleize(String(value??""));
 const display=(value:unknown)=>{
   if(value===null||value===undefined||value==="")return "—";
   if(typeof value==="string"&&/^\d{4}-\d\d-\d\dT/.test(value))return new Date(value).toLocaleDateString();
@@ -97,6 +101,7 @@ export default function OperationsWorkspace(){
   const [overview,setOverview]=useState<Overview|null>(null);
   const [stock,setStock]=useState<{sku:string;name:string}[]>([]);
   const [releases,setReleases]=useState<Release[]>([]);
+  const [schematics,setSchematics]=useState<Release[]>([]);
   const [active,setActive]=useState<Resource>("projects");
   const [showForm,setShowForm]=useState(false);
   const [busy,setBusy]=useState(false);
@@ -111,14 +116,16 @@ export default function OperationsWorkspace(){
   const [productionAction,setProductionAction]=useState("start");
 
   const refresh=useCallback(async()=>{
-    const [data,items,approved]=await Promise.all([
+    const [data,items,approved,approvedSchematics]=await Promise.all([
       request<Overview>("/api/operations/overview"),
       request<{items:{sku:string;name:string}[]}>("/api/inventory"),
       request<{releases:Release[]}>("/api/engineering/releases"),
+      request<{files:Release[]}>("/api/engineering/field-schematics"),
     ]);
     setOverview(data);
     setStock([...new Map(items.items.map(x=>[x.sku,x])).values()]);
     setReleases(approved.releases);
+    setSchematics(approvedSchematics.files);
   },[]);
 
   useEffect(()=>{
@@ -223,6 +230,8 @@ export default function OperationsWorkspace(){
   const selectedService=overview?.service.find(x=>x.id===focusedService);
   const matchingReleases=releases.filter(r=>r.asset_id===selectedService?.asset_id ||
     (r.asset_id===null && r.project_id!==null && r.project_id===selectedService?.project_id));
+  const matchingSchematics=schematics.filter(r=>r.asset_id===selectedService?.asset_id ||
+    (r.asset_id===null && r.project_id!==null && r.project_id===selectedService?.project_id));
 
   if(loading)return <main className="min-h-screen grid place-items-center bg-slate-100 text-slate-600">Connecting to CloudForge operations…</main>;
   if(!user)return <main className="min-h-screen grid place-items-center bg-slate-100 p-5">
@@ -267,7 +276,7 @@ export default function OperationsWorkspace(){
           <h1 className="text-2xl font-bold">{MODULES[active].label}</h1>
           <p className="text-xs text-slate-500 mt-1">{MODULES[active].description}</p></div>
         <div className="flex gap-2"><Button tone="ghost" onClick={()=>void perform(refresh,"Workspace refreshed.")} disabled={busy}><RefreshCcw size={14}/> Refresh</Button>
-          {editable&&<Button onClick={()=>setShowForm(v=>!v)} disabled={busy}><Plus size={15}/> New record</Button>}</div>
+          {editable&&<Button onClick={()=>setShowForm(v=>!v)} disabled={busy}><Plus size={15}/> {active==="documents"?"Other Document Record":"New record"}</Button>}</div>
       </header>
 
       <div className="p-5 lg:p-9 max-w-[1600px] mx-auto space-y-6">
@@ -284,14 +293,20 @@ export default function OperationsWorkspace(){
         {notice&&<div role="status" className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex gap-2 text-sm text-emerald-900">
           <CheckCircle2 size={18}/>{notice}</div>}
 
+        {active==="documents"&&editable&&<EngineeringUploadPanel
+          projects={overview?.projects??[]} assets={overview?.assets??[]}
+          onCreated={async(id)=>{await refresh();await inspectDocument(id);}}
+          onEquipmentAdded={refresh}
+        />}
+
         {showForm&&editable&&<Panel className="p-6">
-          <h2 className="font-bold text-lg mb-4">Create {MODULES[active].label.toLowerCase()} record</h2>
+          <h2 className="font-bold text-lg mb-4">{titleize(`Create ${MODULES[active].label} record`)}</h2>
           <form onSubmit={event=>void create(event)} className="grid md:grid-cols-2 gap-4">
             {MODULES[active].fields.map(f=><label key={f.name} className={"text-xs font-semibold text-slate-700 "+(f.type==="textarea"?"md:col-span-2":"")}>
               <span className="block mb-1.5">{f.label}{f.required?" *":""}</span>
               {f.type==="select"?<select name={f.name} required={f.required} defaultValue=""
                 className="w-full h-10 p-2 rounded-md border border-slate-300 bg-white text-sm">
-                <option value="">Select {f.label.toLowerCase()}</option>
+                <option value="">Select {f.label}</option>
                 {(f.options?.map(x=>({value:x,label:titleize(x)})) ??
                   (options[f.name as keyof typeof options]??[])).map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
               </select>:f.type==="textarea"?<textarea name={f.name} rows={3} required={f.required}
@@ -320,7 +335,7 @@ export default function OperationsWorkspace(){
               <tbody>
                 {!rows.length&&<tr><td colSpan={MODULES[active].columns.length+1} className="p-8 text-center text-slate-500">No records yet. Create the first item to connect this module to CloudForge.</td></tr>}
                 {rows.map(row=><tr key={String(row.id)} className="border-t border-slate-100 hover:bg-slate-50">
-                  {MODULES[active].columns.map(x=><td key={x} className="px-4 py-3 whitespace-nowrap max-w-[220px] truncate">{display(row[x])}</td>)}
+                  {MODULES[active].columns.map(x=><td key={x} className="px-4 py-3 whitespace-nowrap max-w-[220px] truncate">{active==="documents"&&x==="kind"?engineeringKindLabel(row[x]):display(row[x])}</td>)}
                   <td className="px-4 py-3 whitespace-nowrap">
                     {active==="documents"?<button onClick={()=>void inspectDocument(String(row.id))} className="text-teal-700 font-semibold hover:underline">Revisions <ChevronRight className="inline" size={13}/></button>:
                     active==="production"?<button onClick={()=>void inspectProduction(String(row.id))} className="text-teal-700 font-semibold hover:underline">Track job <ChevronRight className="inline" size={13}/></button>:
@@ -344,7 +359,7 @@ export default function OperationsWorkspace(){
             <button aria-label="Close revisions" onClick={()=>setFocusedDoc(null)} className="text-slate-500"><ArrowLeft size={18}/></button>
           </div>
           {editable&&<form onSubmit={event=>void upload(event)} className="border border-dashed border-teal-200 bg-teal-50/50 rounded-lg p-4 flex flex-wrap items-end gap-3">
-            <label className="text-xs font-semibold flex-1 min-w-[200px]">Revision file (15 MB max)
+            <label className="text-xs font-semibold flex-1 min-w-[200px]">Revision file (50 MB max)
               <input type="file" name="file" required className="block w-full mt-2 text-xs"/></label>
             <label className="text-xs font-semibold flex-1 min-w-[180px]">Change notes
               <input name="notes" placeholder="What changed?" className="block w-full mt-2 p-2 border rounded-md"/></label>
@@ -407,9 +422,15 @@ export default function OperationsWorkspace(){
             <div className="flex items-end"><Button type="submit" disabled={busy||!matchingReleases.length}>Record installation</Button></div>
           </form>}
           <div className="space-y-2">{matchingReleases.map(r=><div className="flex justify-between border rounded-lg p-3 text-xs" key={r.id}>
-            <span><b>{r.kind.toUpperCase()}</b> · {r.title} · rev {r.revision}</span>
+            <span><b>{titleize(r.kind)}</b> · {r.title} · rev {r.revision}</span>
             {(user.role==="admin"||user.role==="operator")&&<a className="text-teal-700 font-semibold flex items-center gap-1" href={"/api/engineering/revisions/"+r.id}><Download size={13}/> Download</a>}
           </div>)}</div>
+          <h3 className="font-bold text-sm">Approved Electrical & Mechanical Schematics</h3>
+          {!matchingSchematics.length&&<p className="text-xs text-slate-500">No approved schematics are associated with this service work.</p>}
+          {matchingSchematics.map(r=><div key={r.id} className="flex flex-wrap justify-between gap-3 border rounded-lg p-3 text-xs">
+            <span><b>{engineeringKindLabel(r.kind)}</b> · {r.title} · revision {r.revision}</span>
+            <a href={"/api/engineering/revisions/"+r.id} className="text-teal-700 font-semibold flex gap-1 items-center"><Download size={13}/> Download Approved Drawing</a>
+          </div>)}
           <h3 className="font-bold text-sm">Recorded field installations</h3>
           {!installs.length&&<p className="text-xs text-slate-500">No installed revisions recorded yet.</p>}
           {installs.map(i=><p className="text-xs border-b py-2" key={i.id}><b>{titleize(i.result)}</b> · {i.document_title} rev {i.revision} · {i.technician} · {new Date(i.performed_at).toLocaleString()} {i.notes?" · "+i.notes:""}</p>)}
