@@ -64,7 +64,9 @@ async function license(orgId:string,seats:number) {
   );
 }
 const resourceGet=(resource:string,cookie:string)=>
-  call(request=>resources.GET(request,{params:Promise.resolve({resource})}),{cookie});
+  call(request=>resources.GET(request,{params:Promise.resolve({resource})}),{
+    cookie,path:"/api/operations/"+resource,
+  });
 
 beforeAll(async()=>{
   // Never run this test against a real customer database. The guard rejects
@@ -173,7 +175,7 @@ it("keeps both organizations and memberships separate under the REAL restricted 
 
 it("permits identical customer SKUs, but filters stock and projects by signed-in organization",async()=>{
   const created=await call(inventory.POST,{
-    method:"POST",cookie:bCookie,
+    method:"POST",cookie:bCookie,path:"/api/inventory",
     body:{
       sku:sameSku,name:"Org B Different Part",category:"Mechanical",unit:"ea",
       reorder:"2",onHand:"10",location:"Plant B",bin:"B-01",
@@ -181,8 +183,8 @@ it("permits identical customer SKUs, but filters stock and projects by signed-in
   });
   expect(created.status,JSON.stringify(created.body)).toBe(201);
 
-  const first=await call(inventory.GET,{cookie:a.admin.cookie});
-  const second=await call(inventory.GET,{cookie:bCookie});
+  const first=await call(inventory.GET,{cookie:a.admin.cookie,path:"/api/inventory"});
+  const second=await call(inventory.GET,{cookie:bCookie,path:"/api/inventory"});
   expect(first.status).toBe(200);
   expect(second.status).toBe(200);
   expect(JSON.stringify(first.body.items)).toContain("Org A Bolts");
@@ -198,8 +200,8 @@ it("permits identical customer SKUs, but filters stock and projects by signed-in
 });
 
 it("returns only licensed organization records through workspace overview",async()=>{
-  const aResponse=await call(overview.GET,{cookie:a.admin.cookie});
-  const bResponse=await call(overview.GET,{cookie:bCookie});
+  const aResponse=await call(overview.GET,{cookie:a.admin.cookie,path:"/api/operations/overview"});
+  const bResponse=await call(overview.GET,{cookie:bCookie,path:"/api/operations/overview"});
   expect(aResponse.status,JSON.stringify(aResponse.body)).toBe(200);
   expect(bResponse.status,JSON.stringify(bResponse.body)).toBe(200);
   expect(aResponse.body.projects).toHaveLength(1);
@@ -220,16 +222,18 @@ it("blocks cross-organization engineering file downloads even when IDs are known
   }));
   expect(upload.status).toBe(201);
   const data=await upload.json();
-  const unauthorized=await revision.GET(new Request(ORIGIN,{
+  const unauthorized=await revision.GET(new Request(ORIGIN+"/api/engineering/revisions/"+data.revisionId,{
     headers:{cookie:bCookie},
   }),{params:Promise.resolve({id:data.revisionId})});
   expect(unauthorized.status).toBe(404);
-  const owner=await revision.GET(new Request(ORIGIN,{
+  const owner=await revision.GET(new Request(ORIGIN+"/api/engineering/revisions/"+data.revisionId,{
     headers:{cookie:a.admin.cookie},
   }),{params:Promise.resolve({id:data.revisionId})});
   expect(owner.status).toBe(200);
   expect(Array.from(new Uint8Array(await owner.arrayBuffer()))).toEqual([0,1,2,3,0,255]);
-  const bReleases=await call(releases.GET,{cookie:bCookie});
+  const bReleases=await call(releases.GET,{
+    cookie:bCookie,path:"/api/engineering/releases",
+  });
   expect(bReleases.status).toBe(200);
   expect(bReleases.body.releases).toEqual([]);
 });
