@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse } from "@/server/errors";
 import { requireUuid } from "@/server/operations";
 import { getMaterialShortages } from "@/server/phase3/materials";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     await requireUser(request);
     const project = new URL(request.url).searchParams.get("projectId");
@@ -16,3 +17,5 @@ export async function GET(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);

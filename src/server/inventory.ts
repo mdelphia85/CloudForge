@@ -5,6 +5,7 @@ import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import type { AuthenticatedUser } from "@/server/auth";
 import { deductAvailableStock } from "@/server/inventory-allocation";
+import { evaluateAutoReorder } from "@/server/auto-reorder";
 
 export type InventoryItem = {
   sku: string;
@@ -14,6 +15,9 @@ export type InventoryItem = {
   bin: string;
   onHand: string;
   reorder: string;
+  totalOnHand: string;
+  autoReorderEnabled: boolean;
+  autoReorderQuantity: string;
   unit: string;
   state: "Healthy" | "Low stock" | "Out of stock";
   updated: string;
@@ -111,17 +115,23 @@ export function parseMovementInput(
   return { type: type as MovementInput["type"], sku, quantity, idempotencyKey: key, ...fields };
 }
 
-export async function listInventory(): Promise<InventoryItem[]> {
+export async function listInventory(user: AuthenticatedUser): Promise<InventoryItem[]> {
   const result = await getPool().query<InventoryItem>(
     `SELECT i.sku, i.name, i.category, s.location, s.bin,
             s.on_hand::text AS "onHand", i.reorder_point::text AS reorder, i.unit,
+            i.auto_reorder_enabled AS "autoReorderEnabled",
+            i.auto_reorder_quantity::text AS "autoReorderQuantity",
+            (SELECT COALESCE(SUM(s2.on_hand),0)::text FROM inventory_stock s2
+              WHERE s2.item_id=i.id AND s2.organization_id=i.organization_id) AS "totalOnHand",
             CASE WHEN s.on_hand = 0 THEN 'Out of stock'
                  WHEN s.on_hand <= i.reorder_point THEN 'Low stock'
                  ELSE 'Healthy' END AS state,
             floor(extract(epoch FROM s.updated_at) * 1000)::text AS updated
        FROM inventory_stock s
        JOIN inventory_items i ON i.id = s.item_id
+      WHERE i.organization_id=$1 AND s.organization_id=$1
       ORDER BY i.name, s.location, s.bin`,
+    [user.organizationId],
   );
   return result.rows;
 }
@@ -129,33 +139,33 @@ export async function listInventory(): Promise<InventoryItem[]> {
 export async function createInventoryItem(input: ItemInput, user: AuthenticatedUser): Promise<void> {
   await inTransaction(async (client) => {
     const inserted = await client.query<{ id: string }>(
-      `INSERT INTO inventory_items (sku, name, category, unit, reorder_point, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [input.sku, input.name, input.category, input.unit, input.reorder, user.id],
+      `INSERT INTO inventory_items (organization_id, sku, name, category, unit, reorder_point, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [user.organizationId, input.sku, input.name, input.category, input.unit, input.reorder, user.id],
     );
     const itemId = inserted.rows[0].id;
     await client.query(
-      `INSERT INTO inventory_stock (item_id, location, bin, on_hand, updated_by)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [itemId, input.location, input.bin, input.onHand, user.id],
+      `INSERT INTO inventory_stock (organization_id,item_id, location, bin, on_hand, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [user.organizationId,itemId, input.location, input.bin, input.onHand, user.id],
     );
     if (Number(input.onHand) > 0) {
       await client.query(
         `INSERT INTO inventory_movements
-          (item_id, movement_type, quantity_delta, to_location, to_bin, reference, actor_user_id, idempotency_key)
-         VALUES ($1, 'opening', $2, $3, $4, 'Opening balance', $5, $6)`,
-        [itemId, input.onHand, input.location, input.bin, user.id, randomUUID()],
+          (organization_id,item_id, movement_type, quantity_delta, to_location, to_bin, reference, actor_user_id, idempotency_key)
+         VALUES ($1,$2, 'opening', $3, $4, $5, 'Opening balance', $6, $7)`,
+        [user.organizationId,itemId, input.onHand, input.location, input.bin, user.id, randomUUID()],
       );
     }
-    await writeAudit(client, user.id, "inventory.item.created", "inventory_item", itemId, { sku: input.sku });
+    await writeAudit(client, user.id, user.organizationId, "inventory.item.created", "inventory_item", itemId, { sku: input.sku });
   });
 }
 
 export async function createMovement(input: MovementInput, user: AuthenticatedUser): Promise<void> {
   await inTransaction(async (client) => {
     const itemResult = await client.query<{ id: string }>(
-      "SELECT id FROM inventory_items WHERE sku = $1 AND is_active = true",
-      [input.sku],
+      "SELECT id FROM inventory_items WHERE sku = $1 AND organization_id=$2 AND is_active = true FOR UPDATE",
+      [input.sku,user.organizationId],
     );
     const itemId = itemResult.rows[0]?.id;
     if (!itemId) throw new HttpError(404, "ITEM_NOT_FOUND", "Inventory item was not found.");
@@ -168,12 +178,12 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
 
     if (input.type === "receipt") {
       await client.query(
-        `INSERT INTO inventory_stock (item_id, location, bin, on_hand, updated_by)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO inventory_stock (organization_id,item_id, location, bin, on_hand, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (item_id, location, bin)
          DO UPDATE SET on_hand = inventory_stock.on_hand + EXCLUDED.on_hand,
                        updated_at = now(), updated_by = EXCLUDED.updated_by`,
-        [itemId, input.location, input.bin, input.quantity, user.id],
+        [user.organizationId,itemId, input.location, input.bin, input.quantity, user.id],
       );
     } else if (input.type === "issue" || input.type === "transfer") {
       await deductAvailableStock(
@@ -187,12 +197,12 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
       delta = `-${input.quantity}`;
       if (input.type === "transfer") {
         await client.query(
-          `INSERT INTO inventory_stock (item_id, location, bin, on_hand, updated_by)
-           VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO inventory_stock (organization_id,item_id, location, bin, on_hand, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (item_id, location, bin)
            DO UPDATE SET on_hand = inventory_stock.on_hand + EXCLUDED.on_hand,
                          updated_at = now(), updated_by = EXCLUDED.updated_by`,
-          [itemId, input.destinationLocation, input.destinationBin, input.quantity, user.id],
+          [user.organizationId,itemId, input.destinationLocation, input.destinationBin, input.quantity, user.id],
         );
         toLocation = input.destinationLocation;
         toBin = input.destinationBin;
@@ -203,16 +213,16 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
     } else {
       const currentBalance = await client.query<{ onHand: string }>(
         `SELECT on_hand::text AS "onHand" FROM inventory_stock
-          WHERE item_id = $1 AND location = $2 AND bin = $3 FOR UPDATE`,
-        [itemId, input.location, input.bin],
+          WHERE item_id = $1 AND location = $2 AND bin = $3 AND organization_id=$4 FOR UPDATE`,
+        [itemId, input.location, input.bin,user.organizationId],
       );
       if (currentBalance.rowCount !== 1) {
         throw new HttpError(404, "STOCK_NOT_FOUND", "No stock balance exists at that location and bin.");
       }
       const reservations = await client.query<{ sufficient: boolean }>(
         "SELECT $1::numeric >= COALESCE(SUM(quantity-consumed_qty),0) AS sufficient " +
-          "FROM inventory_reservations WHERE item_id=$2 AND location=$3 AND bin=$4 AND status='reserved'",
-        [input.quantity, itemId, input.location, input.bin],
+          "FROM inventory_reservations WHERE item_id=$2 AND location=$3 AND bin=$4 AND organization_id=$5 AND status='reserved'",
+        [input.quantity, itemId, input.location, input.bin,user.organizationId],
       );
       if (!reservations.rows[0].sufficient) {
         throw new HttpError(409, "COUNT_BELOW_RESERVED", "A count cannot reduce stock below active reservations.");
@@ -220,8 +230,8 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
       await client.query(
         `UPDATE inventory_stock
             SET on_hand = $1, updated_at = now(), updated_by = $2
-          WHERE item_id = $3 AND location = $4 AND bin = $5`,
-        [input.quantity, user.id, itemId, input.location, input.bin],
+          WHERE item_id = $3 AND location = $4 AND bin = $5 AND organization_id=$6`,
+        [input.quantity, user.id, itemId, input.location, input.bin,user.organizationId],
       );
       const change = await client.query<{ delta: string }>(
         "SELECT ($1::numeric - $2::numeric)::text AS delta",
@@ -232,12 +242,13 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
 
     await client.query(
       `INSERT INTO inventory_movements
-        (item_id, movement_type, quantity_delta, from_location, from_bin, to_location, to_bin,
+        (organization_id,item_id, movement_type, quantity_delta, from_location, from_bin, to_location, to_bin,
          reference, actor_user_id, idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [itemId, input.type, delta, fromLocation, fromBin, toLocation, toBin, input.reference ?? null, user.id, input.idempotencyKey],
+       VALUES ($1,$2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [user.organizationId,itemId, input.type, delta, fromLocation, fromBin, toLocation, toBin, input.reference ?? null, user.id, input.idempotencyKey],
     );
-    await writeAudit(client, user.id, `inventory.${input.type}`, "inventory_item", itemId, {
+    await evaluateAutoReorder(client,user.organizationId,itemId,user.id);
+    await writeAudit(client, user.id, user.organizationId, `inventory.${input.type}`, "inventory_item", itemId, {
       sku: input.sku,
       quantityDelta: delta,
       fromLocation,
@@ -248,7 +259,7 @@ export async function createMovement(input: MovementInput, user: AuthenticatedUs
   });
 }
 
-export async function listMovements(sku: string) {
+export async function listMovements(sku: string, user: AuthenticatedUser) {
   const result = await getPool().query(
     `SELECT m.movement_type AS type, m.quantity_delta::text AS "quantityDelta",
             m.from_location AS "fromLocation", m.from_bin AS "fromBin",
@@ -258,10 +269,10 @@ export async function listMovements(sku: string) {
        FROM inventory_movements m
        JOIN inventory_items i ON i.id = m.item_id
        JOIN users u ON u.id = m.actor_user_id
-      WHERE i.sku = $1
+      WHERE i.sku = $1 AND i.organization_id=$2 AND m.organization_id=$2
       ORDER BY m.created_at DESC
       LIMIT 50`,
-    [sku],
+    [sku,user.organizationId],
   );
   return result.rows;
 }
@@ -269,14 +280,15 @@ export async function listMovements(sku: string) {
 async function writeAudit(
   client: PoolClient,
   actorId: string,
+  organizationId: string,
   action: string,
   entityType: string,
   entityId: string,
   details: Record<string, unknown>,
 ): Promise<void> {
   await client.query(
-    `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [actorId, action, entityType, entityId, JSON.stringify(details)],
+    `INSERT INTO audit_events (actor_user_id, organization_id, action, entity_type, entity_id, details)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [actorId, organizationId, action, entityType, entityId, JSON.stringify(details)],
   );
 }

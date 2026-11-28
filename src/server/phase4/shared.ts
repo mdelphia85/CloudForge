@@ -61,8 +61,8 @@ export async function requireAssetAccess(
     customer_site: string;
     created_at: Date;
   }>(
-    `SELECT id,project_id,status,customer_site,created_at FROM engineering_assets WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
-    [assetId],
+    `SELECT id,project_id,status,customer_site,created_at FROM engineering_assets WHERE id=$1 AND organization_id=$2${lock ? " FOR UPDATE" : ""}`,
+    [assetId,user.organizationId],
   );
   if (!result.rowCount) throw new HttpError(404, "EQUIPMENT_NOT_FOUND", "Equipment not found.");
   const asset = result.rows[0];

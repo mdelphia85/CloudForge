@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse, requireSameOrigin } from "@/server/errors";
@@ -6,7 +7,7 @@ import { acknowledgeAlarm } from "@/server/phase5/alarms";
 
 type Context = { params: Promise<{ id: string; alarmId: string }> };
 
-export async function POST(request: Request, { params }: Context) {
+async function handlePOST(request: Request, { params }: Context) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -16,3 +17,5 @@ export async function POST(request: Request, { params }: Context) {
     return errorResponse(error);
   }
 }
+
+export const POST = withOrganizationRoute(handlePOST);

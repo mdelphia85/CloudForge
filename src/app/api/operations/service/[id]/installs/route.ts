@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { requireUser } from "@/server/auth";
@@ -7,7 +8,7 @@ import { audit,operationsError,requireUuid,shortText } from "@/server/operations
 import { listServiceInstalls } from "@/server/phase3/field-service";
 type Context={params:Promise<{id:string}>};
 
-export async function GET(request:Request,{params}:Context) {
+async function handleGET(request:Request,{params}:Context) {
   try {
     const user=await requireUser(request);
     const {id}=await params;
@@ -18,7 +19,7 @@ export async function GET(request:Request,{params}:Context) {
   } catch(error) {return errorResponse(error);}
 }
 
-export async function POST(request:Request,{params}:Context) {
+async function handlePOST(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -84,3 +85,6 @@ export async function POST(request:Request,{params}:Context) {
     return NextResponse.json(result,{status:result.replayed?200:201});
   } catch(error) {return errorResponse(operationsError(error));}
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

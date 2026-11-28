@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from "@/server/auth";
 import { getPool, inTransaction } from "@/server/db";
 import { HttpError } from "@/server/errors";
 import { deductAvailableStock } from "@/server/inventory-allocation";
+import { evaluateAutoReorder } from "@/server/auto-reorder";
 import {
   audit,
   idempotencyKey,
@@ -419,14 +420,15 @@ export async function recordMaintenancePart(
       throw new HttpError(409, "WORK_ORDER_CLOSED", "Parts can only be returned before the work order is closed or cancelled.");
     }
     const item = await client.query<{ id: string; unit: string }>(
-      "SELECT id,unit FROM inventory_items WHERE sku=$1 AND ($2='returned' OR is_active=true)",
-      [sku,action],
+      "SELECT id,unit FROM inventory_items WHERE sku=$1 AND ($2='returned' OR is_active=true) AND organization_id=$3 FOR UPDATE",
+      [sku,action,user.organizationId],
     );
     if (!item.rowCount) throw new HttpError(404, "ITEM_NOT_FOUND", "Active inventory item not found.");
 
     let unitCost = submittedUnitCost ?? "0";
     if (action === "used") {
       await deductAvailableStock(client,item.rows[0].id,location,bin,quantity,user.id);
+      await evaluateAutoReorder(client,user.organizationId,item.rows[0].id,user.id);
     } else {
       const issued = await client.query<{ remaining: string; remaining_cost: string }>(
         "SELECT COALESCE(SUM(CASE WHEN action='used' THEN quantity ELSE -quantity END),0)::text AS remaining, " +

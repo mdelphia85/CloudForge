@@ -1,18 +1,19 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, readJson, requireSameOrigin } from "@/server/errors";
 import { createInventoryItem, listInventory, parseItemInput } from "@/server/inventory";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
-    await requireUser(request);
-    return NextResponse.json({ items: await listInventory() });
+    const user=await requireUser(request);
+    return NextResponse.json({ items: await listInventory(user) });
   } catch (error) {
     return errorResponse(error);
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -27,3 +28,6 @@ export async function POST(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

@@ -1,9 +1,12 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 
 FROM base AS dependencies
 COPY package.json package-lock.json ./
 RUN npm ci
+
+FROM dependencies AS production_dependencies
+RUN npm prune --omit=dev
 
 FROM base AS build
 COPY --from=dependencies /app/node_modules ./node_modules
@@ -19,7 +22,10 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=build /app/migrations ./migrations
 COPY --from=build /app/scripts ./scripts
-COPY --from=build /app/node_modules/@next/env ./node_modules/@next/env
+COPY --from=build /app/deploy/onprem/entrypoint.mjs ./deploy/onprem/entrypoint.mjs
+COPY --from=build /app/deploy/onprem/migrate.mjs ./deploy/onprem/migrate.mjs
+COPY --from=production_dependencies /app/node_modules ./node_modules
 USER nextjs
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=8s --start-period=45s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "server.js"]

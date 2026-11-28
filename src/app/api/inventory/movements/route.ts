@@ -1,22 +1,23 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { createMovement, listMovements, parseMovementInput } from "@/server/inventory";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
-    await requireUser(request);
+    const user=await requireUser(request);
     const sku = new URL(request.url).searchParams.get("sku")?.trim().toUpperCase();
     if (!sku || !/^[A-Z0-9][A-Z0-9._-]{0,63}$/.test(sku)) {
       throw new HttpError(400, "INVALID_SKU", "Provide a valid SKU.");
     }
-    return NextResponse.json({ movements: await listMovements(sku) });
+    return NextResponse.json({ movements: await listMovements(sku,user) });
   } catch (error) {
     return errorResponse(error);
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -34,3 +35,6 @@ export async function POST(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

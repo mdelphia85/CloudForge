@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { isResource, requireUuid, updateStatus, operationsError } from "@/server/operations";
 
 type Context = {params:Promise<{resource:string;id:string}>};
-export async function PATCH(request:Request,{params}:Context) {
+async function handlePATCH(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -15,3 +16,5 @@ export async function PATCH(request:Request,{params}:Context) {
     return NextResponse.json(await updateStatus(resource,requireUuid(id),body.status,user));
   } catch (error) { return errorResponse(operationsError(error)); }
 }
+
+export const PATCH = withOrganizationRoute(handlePATCH);

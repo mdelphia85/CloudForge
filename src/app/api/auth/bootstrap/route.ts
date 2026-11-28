@@ -38,18 +38,30 @@ export async function POST(request: Request) {
          RETURNING id, email, display_name, role`,
         [email, displayName, passwordHash],
       );
+      const originalOrganization=await client.query<{id:string}>(
+        "SELECT id FROM organizations WHERE identifier='existing-installation' FOR SHARE",
+      );
+      if (!originalOrganization.rowCount) {
+        throw new HttpError(503,"ORGANIZATION_CONFIGURATION",
+          "The existing installation organization must be provisioned before administrator setup.");
+      }
       await client.query(
-        `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details)
-         VALUES ($1, 'user.bootstrap', 'user', $1, $2)`,
-        [result.rows[0].id, JSON.stringify({ email, role: "admin" })],
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'admin')",
+        [originalOrganization.rows[0].id,result.rows[0].id],
+      );
+      await client.query(
+        `INSERT INTO audit_events (actor_user_id,organization_id,action, entity_type, entity_id, details)
+         VALUES ($1,$3,'user.bootstrap', 'user', $1, $2)`,
+        [result.rows[0].id, JSON.stringify({ email, role: "admin" }),originalOrganization.rows[0].id],
       );
       return result.rows[0];
     });
 
     const sessionToken = newSessionToken();
-    await createSession(user.id, sessionToken, "auth.bootstrap");
+    const membership=await createSession(user.id, sessionToken, "auth.bootstrap");
     const response = NextResponse.json({
-      user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
+      user: { id: user.id, email: user.email, displayName: user.display_name,
+        role: membership.role, organizationId: membership.organizationId },
     }, { status: 201 });
     response.cookies.set("cloudforge_session", sessionToken, sessionCookieOptions());
     return response;

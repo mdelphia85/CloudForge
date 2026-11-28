@@ -25,6 +25,18 @@ The customer-managed gateway separates the protocol provider contract from the s
 
 This remains a single-organization application; tenant isolation and organization switching are not implemented, so multiple customers must not share a database. Live PLC/HMI transfers, offline mutation/synchronization, automatic scheduling, and AI operations are not implemented. Local authentication includes per-identifier login throttling, administrator account enable/disable, and session revocation; MFA and password recovery are not implemented. Migration `007` adds a session epoch to invalidate sign-ins already in flight when an account is disabled or its sessions are revoked. Roll back by restoring a tested pre-migration backup or rolling forward; do not remove security state from an active database.
 
+### Organization and license foundation (not ready for deployment)
+
+Migration `012` is a compatibility stage, **not multi-tenant isolation**. It creates one explicitly identified existing-installation organization, associates existing users and operational rows with it, and deliberately rejects a second organization. Legacy writes continue to use that organization's database default. User memberships are recorded but are not yet the authorization boundary; queries, joins, foreign keys, gateway authentication, background work, and downloads still require conversion and isolation testing. Do not remove the singleton constraint or share a database between customers. The migration must not be applied to the live installation without explicit approval, a verified backup, a rehearsal on a restored copy, and a maintenance plan.
+
+Platform owners are separate from organization administrators and are never assigned automatically. After approval in a non-production installation, an operator with authorized database access may explicitly grant an existing active user with `node scripts/grant-platform-owner.mjs <user-uuid>`; the database role and target are recorded in an append-only event. A platform owner can access `/platform` to install a signed license for the existing organization. License installation and inspection use the server-only `LICENSE_PUBLIC_KEY` environment variable containing the trusted Ed25519 public key in PEM SubjectPublicKeyInfo format. Never put the private signing key in a customer installation.
+
+The imported JSON file contains `payload` and `signature`, both unpadded base64url. The signature is Ed25519 over the exact UTF-8 bytes decoded from `payload`; the payload is a JSON object with `version` (1), `licenseId`, `organizationId` (canonical lowercase UUIDs), `licenseType` (`saas`, `dedicated`, `on_premises`, or `air_gapped`), `tier`, `seatLimit`, `modules`, `issuedAt`, `activatedAt`, and `expiresAt`. Timestamps use canonical UTC ISO format with milliseconds. Supported module identifiers are `inventory`, `projects`, `engineering`, `production`, `purchasing`, `field_service`, `equipment`, and `telemetry`. The installer verifies signatures and organization binding locally without an internet connection and records installations in append-only history; older licenses cannot replace newer ones. Public-key rotation requires a planned reissuance or a future key-ring mechanism, since stored licenses are reverified with the current key.
+
+**License status, seats, and module entitlements are not enforced yet.** The selected future policy is a 30-day expiration grace period followed by organization-admin-only recovery and export; suspension should take effect without an expiration grace period. Recovery/export, license suspension, organization onboarding and switching, user invitations, tenant-level RLS and application isolation remain unimplemented. Existing installations are not issued a license automatically. Do not treat this stage as commercially licensed, production-ready, or safe for multiple organizations. No license or customer data is sent to an external service by this foundation.
+
+Rollback of this migration must use a verified pre-migration backup or a reviewed corrective migration. Restoring a backup discards later writes unless they are separately recovered; do not drop operational or audit history. Test the restore before a release.
+
 Migration `009` permits anonymous authentication-failure audit events without a user actor or target. Each failed or throttled sign-in records a SHA-256 hash of the normalized identifier, not the password. These hashes are pseudonymous and may be guessed, so restrict audit access and monitor storage. Audit writes and failed-attempt counters are atomic. Preserve the audit history when recovering or rolling forward.
 
 ## Target shape
@@ -118,3 +130,46 @@ Produce a signed release bundle containing container images, SBOM, migration fil
 5. Complete deployment manifests, signed air-gapped release bundles, security scans, and operational runbooks.
 6. Add the next ERP domains on the established authorization, audit, and data boundaries.
 7. Perform a formal control mapping and independent assessment for the target contract and environment.
+
+
+## Platform-owner signed license issuance (draft foundation only)
+
+License issuing is a **separate platform-owner operation**. The Ed25519 private signing key
+must never be deployed to the CloudForge server, Railway, customer on-premises installations,
+air-gapped machines, or version control. The customer installation needs only the public
+verification key (`LICENSE_PUBLIC_KEY`).
+
+To issue an individual organization's license, securely generate and retain a private/public
+Ed25519 key pair on an authorized owner workstation. Protect the private key with restrictive
+permissions (0600 on POSIX, explicit restricted NTFS ACLs on Windows), an offline backup,
+and an appropriate key rotation/revocation plan.
+
+Prepare a request JSON file with these fields (using the actual organization UUID):
+
+```json
+{
+  "organizationId": "12345678-1234-4234-8234-123456789abc",
+  "licenseType": "air_gapped",
+  "tier": "professional",
+  "seatLimit": 25,
+  "modules": ["inventory", "projects", "engineering", "equipment", "field_service"],
+  "expiresAt": "2028-01-01T00:00:00.000Z"
+}
+```
+
+On a secured platform-owner workstation only:
+
+```sh
+CLOUDFORGE_LICENSE_SIGNING_KEY_FILE=/secure/ed25519-private.pem node scripts/issue-license.mjs license-request.json signed-license.json
+```
+
+The issuer generates a distinct license UUID and signature, creates a new file rather than
+overwriting an old license, and prints no private key. Transfer **only** the signed license
+JSON to the intended customer installation. An authorized platform owner may install
+it through the platform-license UI. Never email or upload the private key.
+
+**This is foundation tooling, not commercial licensing enforcement.** The application still
+does not enforce seats, modules, time validity, organization suspension, or tenant isolation
+on operational API routes. The singleton organization constraint remains in place. Do not
+onboard multiple independent cloud tenants or merge this draft PR until the full authorization
+and license enforcement requirements have been implemented and tested.

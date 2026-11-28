@@ -1,10 +1,11 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { isResource, listResource, createResource, operationsError } from "@/server/operations";
 
 type Context = { params: Promise<{resource:string}> };
-export async function GET(request:Request, {params}:Context) {
+async function handleGET(request:Request, {params}:Context) {
   try {
     const {resource}=await params;
     if (!isResource(resource)) throw new HttpError(404,"NOT_FOUND","Unknown module.");
@@ -12,7 +13,7 @@ export async function GET(request:Request, {params}:Context) {
     return NextResponse.json({records:await listResource(resource,user)}, {headers:{"Cache-Control":"no-store"}});
   } catch (error) { return errorResponse(error); }
 }
-export async function POST(request:Request, {params}:Context) {
+async function handlePOST(request:Request, {params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -22,3 +23,6 @@ export async function POST(request:Request, {params}:Context) {
     return NextResponse.json(await createResource(resource,await readJson(request),user),{status:201});
   } catch (error) { return errorResponse(operationsError(error)); }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

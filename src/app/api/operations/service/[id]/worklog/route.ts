@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse } from "@/server/errors";
@@ -6,7 +7,7 @@ import { listServiceWork } from "@/server/phase3/field-service";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, { params }: Context) {
+async function handleGET(request: Request, { params }: Context) {
   try {
     const user = await requireUser(request);
     const { id } = await params;
@@ -17,3 +18,5 @@ export async function GET(request: Request, { params }: Context) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);

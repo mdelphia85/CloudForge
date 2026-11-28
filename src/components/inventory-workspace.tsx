@@ -1,16 +1,20 @@
 "use client";
 
+import OrganizationSwitcher from "@/components/organization-switcher";
+import Link from "next/link";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive, Boxes, ChevronDown, CircleAlert, ClipboardList, FileClock, LogOut,
   Package, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wrench,
 } from "lucide-react";
 
-type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer" };
+type User = { id: string; email: string; displayName: string; role: "admin" | "operator" | "viewer"; mfaEnabled?:boolean; mfaRecoveryAuthenticated?:boolean };
 type ManagedUser = User & { isActive: boolean };
 type Item = {
   sku: string; name: string; category: string; location: string; bin: string;
-  onHand: string; reorder: string; unit: string;
+  onHand: string; totalOnHand: string; reorder: string; unit: string;
+  autoReorderEnabled: boolean; autoReorderQuantity: string;
   state: "Healthy" | "Low stock" | "Out of stock"; updated: string;
 };
 type Movement = {
@@ -18,7 +22,11 @@ type Movement = {
   toLocation: string | null; toBin: string | null; reference: string | null;
   createdAt: string; actorName: string;
 };
-type AuthStatus = { setupRequired: boolean; setupEnabled: boolean; user: User | null };
+type ReorderRequest = {
+  id: string; sku: string; name: string; quantity: string; status: string;
+  createdAt: string; reference: string; autoReorderEnabled: boolean;
+};
+type AuthStatus = { setupRequired: boolean; setupEnabled: boolean; user: User | null; mfaRequired?:boolean };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, credentials: "same-origin", cache: "no-store" });
@@ -35,7 +43,14 @@ export default function InventoryWorkspace() {
   const [user, setUser] = useState<User | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupEnabled, setSetupEnabled] = useState(false);
+  const [mfaRequired,setMfaRequired] = useState(false);
+  const [mfaSetupOpen,setMfaSetupOpen] = useState(false);
+  const [mfaSecret,setMfaSecret] = useState("");
+  const [mfaSetupUrl,setMfaSetupUrl] = useState("");
+  const [mfaRecoveryCodes,setMfaRecoveryCodes] = useState<string[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [reorders, setReorders] = useState<ReorderRequest[]>([]);
+  const [notice, setNotice] = useState("");
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [query, setQuery] = useState("");
@@ -48,8 +63,12 @@ export default function InventoryWorkspace() {
   const [error, setError] = useState("");
 
   const refreshItems = useCallback(async () => {
-    const result = await requestJson<{ items: Item[] }>("/api/inventory");
+    const [result,queue] = await Promise.all([
+      requestJson<{ items: Item[] }>("/api/inventory"),
+      requestJson<{ requests: ReorderRequest[] }>("/api/inventory/reorder"),
+    ]);
     setItems(result.items);
+    setReorders(queue.requests);
   }, []);
 
   const loadSession = useCallback(async () => {
@@ -59,8 +78,9 @@ export default function InventoryWorkspace() {
       const status = await requestJson<AuthStatus>("/api/auth/status");
       setSetupRequired(status.setupRequired);
       setSetupEnabled(status.setupEnabled);
+      setMfaRequired(Boolean(status.mfaRequired));
       setUser(status.user);
-      if (status.user) await refreshItems();
+      if (status.user && (!status.mfaRequired || status.user.mfaEnabled)) await refreshItems();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to connect to CloudForge.");
     } finally {
@@ -75,10 +95,14 @@ export default function InventoryWorkspace() {
         if (!active) return;
         setSetupRequired(status.setupRequired);
         setSetupEnabled(status.setupEnabled);
+        setMfaRequired(Boolean(status.mfaRequired));
         setUser(status.user);
-        if (status.user) {
-          const result = await requestJson<{ items: Item[] }>("/api/inventory");
-          if (active) setItems(result.items);
+        if (status.user && (!status.mfaRequired || status.user.mfaEnabled)) {
+          const [result,queue] = await Promise.all([
+            requestJson<{ items: Item[] }>("/api/inventory"),
+            requestJson<{ requests: ReorderRequest[] }>("/api/inventory/reorder"),
+          ]);
+          if (active) { setItems(result.items); setReorders(queue.requests); }
         }
       })
       .catch((reason: unknown) => {
@@ -139,12 +163,59 @@ export default function InventoryWorkspace() {
     }
   }
 
+  async function saveAutoReorder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedItem) return;
+    const form=new FormData(event.currentTarget);
+    const enabled=form.get("enabled")==="on";
+    const quantity=String(form.get("replenishQuantity") ?? "");
+    const point=String(form.get("reorderPoint") ?? "");
+    setSaving(true);setError("");setNotice("");
+    try {
+      const result=await requestJson<{createdRequestId:string|null}>("/api/inventory/reorder",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          sku:selectedItem.sku, enabled, reorderPoint:point, replenishQuantity:quantity,
+        }),
+      });
+      await refreshItems();
+      setNotice(enabled
+        ? result.createdRequestId
+          ? "Auto Reorder enabled. A purchase request was created for review."
+          : "Auto Reorder enabled. No new request is needed or a request is already open."
+        : "Auto Reorder disabled. Existing purchasing records have been preserved.");
+    }catch(reason){
+      setError(reason instanceof Error?reason.message:"Unable to update Auto Reorder settings.");
+    }finally{setSaving(false);}
+  }
+
+  async function checkReorderNow() {
+    if(!selectedItem)return;
+    setSaving(true);setError("");setNotice("");
+    try {
+      const result=await requestJson<{createdRequestId:string|null}>("/api/inventory/reorder",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({sku:selectedItem.sku}),
+      });
+      await refreshItems();
+      setNotice(result.createdRequestId
+        ? "Stock is below the threshold. A new purchase request is ready for approval."
+        : "Reorder checked. No duplicate request was created.");
+    }catch(reason){
+      setError(reason instanceof Error?reason.message:"Could not check replenishment.");
+    }finally{setSaving(false);}
+  }
+
   async function signOut() {
     setSaving(true);
     try {
       await requestJson("/api/auth/logout", { method: "POST" });
       setUser(null);
       setItems([]);
+      setMfaSecret("");
+      setMfaRecoveryCodes([]);
+      setMfaSetupOpen(false);
+      setReorders([]);
       setSelectedSku(null);
       setMovements([]);
     } catch (reason) {
@@ -184,6 +255,36 @@ export default function InventoryWorkspace() {
     }
   }
 
+  async function startMfaSetup(event:React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    setSaving(true);setError("");
+    try {
+      const result=await requestJson<{secret:string;otpauthUrl:string}>("/api/auth/mfa/setup",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({password:data.get("password")}),
+      });
+      setMfaSecret(result.secret);
+      setMfaSetupUrl(result.otpauthUrl);
+    }catch(e){setError(e instanceof Error?e.message:"Could not start authenticator setup.");}
+    finally{setSaving(false);}
+  }
+  async function finishMfaSetup(event:React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    setSaving(true);setError("");
+    try {
+      const result=await requestJson<{recoveryCodes:string[]}>("/api/auth/mfa/verify",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({code:data.get("code")}),
+      });
+      setMfaSecret("");
+      setMfaSetupUrl("");
+      setMfaRecoveryCodes(result.recoveryCodes);
+    }catch(e){setError(e instanceof Error?e.message:"Authenticator code could not be verified.");}
+    finally{setSaving(false);}
+  }
+
   if (loading) {
     return <main className="auth-screen"><div className="auth-card"><span className="brand-mark"><Boxes size={18} /></span><p className="eyebrow">CloudForge</p><h1>Connecting to your workspace</h1><p className="subtitle">Verifying the local session and inventory service.</p></div></main>;
   }
@@ -212,6 +313,9 @@ export default function InventoryWorkspace() {
               {bootstrap && <label>Your name<input required name="displayName" minLength={2} maxLength={120} autoComplete="name" /></label>}
               <label>Email<input required name="email" type="email" maxLength={254} autoComplete="username" /></label>
               <label>Password<input required name="password" type="password" maxLength={256} autoComplete={bootstrap ? "new-password" : "current-password"} /></label>
+              {!bootstrap && <label>Authenticator or recovery code (when MFA is enabled)
+                <input name="mfaCode" type="text" autoComplete="one-time-code" maxLength={128}
+                  placeholder="6-digit code or recovery code" /></label>}
               {bootstrap && <small className="password-hint">At least 14 characters, including uppercase, lowercase, a number, and a symbol.</small>}
               <button className="primary-button auth-submit" disabled={saving}>{saving ? "Please wait…" : bootstrap ? "Create administrator" : "Sign in"}</button>
             </form>
@@ -221,6 +325,44 @@ export default function InventoryWorkspace() {
         </section>
       </main>
     );
+  }
+
+  if (user && ((!user.mfaEnabled && mfaRequired) || mfaSetupOpen)) {
+    return <main className="auth-screen"><section className="auth-card" style={{maxWidth:580}}>
+      <p className="eyebrow">CloudForge account security</p>
+      <h1>{user.mfaEnabled ? "Replace lost authenticator" : "Set up multi-factor authentication"}</h1>
+      <p className="subtitle">{user.mfaEnabled
+        ? "You signed in with a one-time recovery code. Confirm your password, register a new authenticator, and save your replacement emergency codes."
+        : "Use an authenticator app to protect your organization. Recovery codes are shown only once."}</p>
+      {error&&<p role="alert" className="form-error">{error}</p>}
+      {mfaRecoveryCodes.length>0 ? <>
+        <h2>Save your one-time recovery codes</h2>
+        <p className="subtitle">Store these offline in a secure location. Each code can be used only once. Your previous sessions have been revoked.</p>
+        <textarea readOnly value={mfaRecoveryCodes.join("\n")} rows={10} style={{width:"100%"}} aria-label="One-time recovery codes"/>
+        <button className="primary-button" type="button" onClick={()=>{
+          setMfaRecoveryCodes([]);setUser(null);setMfaSetupOpen(false);setError("");
+        }}>I saved my codes — sign in again</button>
+      </> : mfaSecret ? <>
+        <p>Enter this key into an authenticator app:</p>
+        <code style={{wordBreak:"break-all",display:"block",padding:12}}>{mfaSecret}</code>
+        <p className="subtitle">Or open this URI in a compatible authenticator app:</p>
+        <input readOnly value={mfaSetupUrl} aria-label="Authenticator setup URI" onFocus={event=>event.currentTarget.select()}/>
+        <form onSubmit={event=>void finishMfaSetup(event)}>
+          <label>Six-digit code from your authenticator
+            <input required name="code" type="text" inputMode="numeric"
+              autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6}/>
+          </label>
+          <button disabled={saving} className="primary-button" type="submit">Verify and enable MFA</button>
+        </form>
+      </> : <form onSubmit={event=>void startMfaSetup(event)}>
+        <label>Confirm your password
+          <input name="password" type="password" autoComplete="current-password" required maxLength={256}/>
+        </label>
+        <button disabled={saving} className="primary-button" type="submit">Start authenticator setup</button>
+      </form>}
+      {!mfaRequired && mfaRecoveryCodes.length===0 && <button type="button" className="secondary-button"
+        onClick={()=>{setMfaSetupOpen(false);setMfaSecret("");setError("");}}>Cancel</button>}
+    </section></main>;
   }
 
   return (
@@ -251,9 +393,15 @@ export default function InventoryWorkspace() {
         <header className="topbar">
           <div className="breadcrumbs"><span>Operations</span><span>/</span><strong>Inventory</strong></div>
           <div className="topbar-actions">
+            <OrganizationSwitcher />
             <span className="sync-status"><i />Connected</span>
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => { setError(""); setModal("user"); }}><Users size={15} /> Add user</button>}
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => void loadAccounts()}><Users size={15} /> Manage accounts</button>}
+            {user.role === "admin" && <Link href="/organization/members" className="secondary-button compact-button"><Users size={15} /> Organization Members</Link>}
+            {!user.mfaEnabled && <button className="secondary-button compact-button"
+              onClick={()=>setMfaSetupOpen(true)}><ShieldCheck size={15}/> Enable MFA</button>}
+            {user.mfaEnabled && user.mfaRecoveryAuthenticated && <button className="secondary-button compact-button"
+              onClick={()=>setMfaSetupOpen(true)}><ShieldCheck size={15}/> Replace lost authenticator</button>}
             <button className="icon-button" aria-label="Refresh inventory" onClick={() => void refreshItems().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Refresh failed."))}><RefreshCw size={17} /></button>
             <button className="icon-button mobile-signout" aria-label="Sign out" onClick={() => void signOut()} disabled={saving}><LogOut size={15} /></button>
           </div>
@@ -279,7 +427,7 @@ export default function InventoryWorkspace() {
               </select>
             </div>
             <div className="table-scroll"><table>
-              <thead><tr><th>Item</th><th>Category</th><th>Location / bin</th><th>On hand</th><th>Status</th><th>Updated</th></tr></thead>
+              <thead><tr><th>Item</th><th>Category</th><th>Location / bin</th><th>On hand</th><th>Status</th><th>Auto Reorder</th><th>Updated</th></tr></thead>
               <tbody>{visibleItems.map((item) => (
                 <tr className={selectedSku === item.sku ? "row-selected" : ""} key={`${item.sku}-${item.location}-${item.bin}`} onClick={() => { setMovements([]); setSelectedSku(item.sku); setError(""); }}>
                   <td><div className="item-cell"><span className="item-thumb"><Package size={17} /></span><div><strong>{item.name}</strong><span>{item.sku}</span></div></div></td>
@@ -287,6 +435,7 @@ export default function InventoryWorkspace() {
                   <td><div className="location-cell"><span>{item.location}</span><small>{item.bin}</small></div></td>
                   <td><strong>{Number(item.onHand).toLocaleString()}</strong> <span className="unit">{item.unit}</span><small className="reorder-line">reorder at {Number(item.reorder).toLocaleString()}</small></td>
                   <td><span className={`status ${item.state.toLowerCase().replaceAll(" ", "-")}`}><i />{item.state}</span></td>
+                  <td><span className="category-tag">{item.autoReorderEnabled ? "Enabled" : "Disabled"}</span></td>
                   <td className="updated">{formatTime(item.updated)}</td>
                 </tr>
               ))}</tbody>
@@ -301,7 +450,43 @@ export default function InventoryWorkspace() {
       {selectedItem && <aside className="detail-drawer" aria-label="Inventory item details">
         <button className="modal-close drawer-close" onClick={() => { setSelectedSku(null); setMovements([]); }} aria-label="Close item details">×</button>
         <p className="eyebrow">Inventory item</p><h2>{selectedItem.name}</h2><span className="detail-sku">{selectedItem.sku}</span>
-        <div className="detail-facts"><span>Category<strong>{selectedItem.category}</strong></span><span>Location<strong>{selectedItem.location}</strong></span><span>Bin<strong>{selectedItem.bin}</strong></span><span>On hand<strong>{selectedItem.onHand} {selectedItem.unit}</strong></span><span>Reorder point<strong>{selectedItem.reorder} {selectedItem.unit}</strong></span></div>
+        <div className="detail-facts"><span>Category<strong>{selectedItem.category}</strong></span><span>Location<strong>{selectedItem.location}</strong></span><span>Bin<strong>{selectedItem.bin}</strong></span><span>On hand<strong>{selectedItem.onHand} {selectedItem.unit}</strong></span><span>Reorder point<strong>{selectedItem.reorder} {selectedItem.unit}</strong></span><span>Total across bins<strong>{selectedItem.totalOnHand} {selectedItem.unit}</strong></span></div>
+        {notice && <p role="status" className="workflow-note">{notice}</p>}
+        <section className="movement-history" aria-label="Automatic replenishment settings">
+          <h3>Auto Reorder</h3>
+          <p className="workflow-note">
+            {selectedItem.autoReorderEnabled ? "Enabled" : "Disabled"} ·
+            Auto Reorder creates a purchase request for approval; it never purchases automatically.
+            Disabling stops future suggestions and preserves existing records.
+          </p>
+          {canWrite ? <form key={selectedItem.sku} onSubmit={(event)=>void saveAutoReorder(event)}>
+            <label style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="checkbox" name="enabled" defaultChecked={selectedItem.autoReorderEnabled}/>
+              Enable Auto Reorder for this item
+            </label>
+            <div className="form-grid">
+              <label>Reorder point (total across bins)
+                <input type="number" name="reorderPoint" min="0" step="0.001" required defaultValue={selectedItem.reorder}/>
+              </label>
+              <label>Replenishment quantity
+                <input type="number" name="replenishQuantity" min="0" step="0.001" required defaultValue={selectedItem.autoReorderQuantity}/>
+              </label>
+            </div>
+            <div className="drawer-actions">
+              <button type="submit" className="primary-button" disabled={saving}>Save Auto Reorder</button>
+              <button type="button" className="secondary-button" disabled={saving}
+                onClick={()=>void checkReorderNow()}>Check reorder now</button>
+            </div>
+          </form> : <p>Only administrators and operators can update this setting.</p>}
+          {reorders.filter(request=>request.sku===selectedItem.sku).slice(0,4).map(request=>(
+            <article className="movement-entry" key={request.id}>
+              <strong>Purchase request · {request.quantity} {selectedItem.unit}</strong>
+              <span>{request.status} · {request.reference}</span>
+              <small>{new Date(request.createdAt).toLocaleString()}</small>
+            </article>
+          ))}
+          <p className="workflow-note">Review purchase requests in <Link href="/operations">Projects &amp; engineering / Purchasing</Link>.</p>
+        </section>
         {canWrite && <div className="drawer-actions"><button className="primary-button" onClick={() => { setMovementType("receipt"); setModal("movement"); }}><Plus size={15} /> Record movement</button></div>}
         <div className="movement-history"><h3>Movement history</h3>{movements.length ? movements.map((movement, index) => (
           <article className="movement-entry" key={`${movement.createdAt}-${index}`}>

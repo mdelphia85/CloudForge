@@ -63,7 +63,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm ci --prefix gateway
+      - name: Start real ClamAV scanner
+        run: |
+          set -euo pipefail
+          docker run -d --name cloudforge-ci-clamav -p 127.0.0.1:3310:3310 clamav/clamav:stable
+          for attempt in $(seq 1 90); do
+            if docker exec cloudforge-ci-clamav clamdscan --ping 1 >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs cloudforge-ci-clamav
+          exit 1
       - run: npm run test:integration
+        env:
+          CLOUDFORGE_CI_REAL_SCANNER: "true"
+      - name: Remove test scanner
+        if: always()
+        run: docker rm -f cloudforge-ci-clamav || true
 
   build:
     name: Production build
@@ -92,3 +109,227 @@ jobs:
           cache: npm
       - run: npm audit --omit=dev --audit-level=high
       - run: npm audit --prefix gateway --omit=dev --audit-level=high
+
+  onprem:
+    name: On-premises container and database-role smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare ephemeral test secrets
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p secrets
+          openssl rand -hex 32 > secrets/postgres-admin-password.txt
+          openssl rand -hex 32 > secrets/postgres-app-password.txt
+          openssl rand -hex 32 > secrets/bootstrap-admin-token.txt
+          openssl rand -hex 32 > secrets/mfa-encryption-key.txt
+          openssl genpkey -algorithm Ed25519 -out /tmp/cloudforge-ci-private.pem
+          openssl pkey -in /tmp/cloudforge-ci-private.pem -pubout -out secrets/license-public-key.pem
+      - name: Build and launch disposable on-premises stack
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          docker compose build
+          docker compose up -d --no-build
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health/ready >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --show-error --silent http://127.0.0.1:3000/api/health/ready
+      - name: Verify restricted app database role and first administrator
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          role_flags=$(docker compose exec -T postgres sh -c \
+            'PGPASSWORD=$(cat /run/secrets/postgres_admin_password) psql -U cloudforge_admin -d cloudforge -Atc "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname='\''cloudforge_app'\''"')
+          test "$role_flags" = "f|f"
+          token=$(cat secrets/bootstrap-admin-token.txt)
+          status=$(curl --silent --show-error -o /tmp/cloudforge-bootstrap.json -w '%{http_code}' \
+            -H 'Origin: http://localhost:3000' \
+            -H 'Content-Type: application/json' \
+            --data "{\"bootstrapToken\":\"$token\",\"email\":\"ci-owner@example.test\",\"displayName\":\"CI Owner\",\"password\":\"Strong-CI-Account-2026!\"}" \
+            http://127.0.0.1:3000/api/auth/bootstrap)
+          test "$status" = "201"
+          grep -q '"role":"admin"' /tmp/cloudforge-bootstrap.json
+      - name: Verify database backup and full restore, including engineering file bytes
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          trap 'rm -f /tmp/cloudforge-restore-ci.dump' EXIT
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge -v ON_ERROR_STOP=1
+          ' <<'SQL'
+          INSERT INTO inventory_items(sku,name,category,unit,reorder_point,created_by)
+            SELECT 'RESTORE-BOLT','Backed-up fastener','Mechanical','ea',20,id FROM users
+            WHERE email='ci-owner@example.test';
+          INSERT INTO projects(code,name,customer,created_by)
+            SELECT 'RESTORE-TEST','Recovery test project','CI Manufacturer',id FROM users
+            WHERE email='ci-owner@example.test';
+          INSERT INTO engineering_documents(project_id,title,kind,created_by)
+            SELECT p.id,'Recovered PLC program','plc',u.id
+              FROM projects p CROSS JOIN users u
+             WHERE p.code='RESTORE-TEST' AND u.email='ci-owner@example.test';
+          INSERT INTO engineering_revisions(document_id,revision,file_name,content_type,
+            byte_size,sha256,file_data,uploaded_by)
+            SELECT d.id,1,'backup-verify.bin','application/octet-stream',4,
+              encode(sha256(decode('DEADBEEF','hex')),'hex'),decode('DEADBEEF','hex'),u.id
+              FROM engineering_documents d CROSS JOIN users u
+             WHERE d.title='Recovered PLC program' AND u.email='ci-owner@example.test';
+          SQL
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            pg_dump -U cloudforge_admin -d cloudforge -Fc --no-owner --no-acl
+          ' > /tmp/cloudforge-restore-ci.dump
+          test -s /tmp/cloudforge-restore-ci.dump
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            createdb -U cloudforge_admin cloudforge_restore_ci
+          '
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            pg_restore -U cloudforge_admin -d cloudforge_restore_ci --no-owner --no-acl
+          ' < /tmp/cloudforge-restore-ci.dump
+          inventory=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT sku FROM inventory_items ORDER BY sku LIMIT 1"
+          ')
+          test "$inventory" = "RESTORE-BOLT"
+          program=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
+          ')
+          test "$program" = "deadbeef"
+          integrity=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc "SELECT count(*) FROM engineering_revisions WHERE sha256=encode(sha256(file_data),chr(104)||chr(101)||chr(120)) AND byte_size=octet_length(file_data)"
+          ')
+          test "$integrity" = "1"
+          original=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge -Atc               "SELECT count(*) FROM schema_migrations"
+          ')
+          restored=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT count(*) FROM schema_migrations"
+          ')
+          test "$original" = "$restored"
+          echo "Disposable PostgreSQL restore validated: inventory, binary engineering revision and schema versions."
+      - name: Verify age-encrypted customer backup and isolated recovery
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y age
+          fi
+          umask 077
+          age-keygen -o /tmp/cloudforge-ci-recovery.key
+          recipient="$(age-keygen -y /tmp/cloudforge-ci-recovery.key)"
+          mkdir -p /tmp/cloudforge-ci-encrypted
+          CLOUDFORGE_BACKUP_DIR=/tmp/cloudforge-ci-encrypted \
+          CLOUDFORGE_BACKUP_RECIPIENT="$recipient" \
+            bash deploy/onprem/backup-encrypted.sh
+          archive="$(find /tmp/cloudforge-ci-encrypted -maxdepth 1 -type f -name '*.pgdump.age' -print -quit)"
+          test -s "$archive"
+          if grep -a -q 'RESTORE-BOLT' "$archive"; then
+            echo 'Backup unexpectedly contained plaintext records' >&2
+            exit 1
+          fi
+          bash deploy/onprem/restore-encrypted.sh \
+            "$archive" cloudforge_restore_secure_ci /tmp/cloudforge-ci-recovery.key
+          actual="$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_secure_ci -Atc \
+              "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
+          ')"
+          test "$actual" = "deadbeef"
+          integrity=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_secure_ci -Atc "SELECT count(*) FROM engineering_revisions WHERE sha256=encode(sha256(file_data),chr(104)||chr(101)||chr(120)) AND byte_size=octet_length(file_data)"
+          ')
+          test "$integrity" = "1"
+          rm -rf -- /tmp/cloudforge-ci-encrypted /tmp/cloudforge-ci-recovery.key
+          echo "Encrypted backup and clean-room restore accepted."
+      - name: Verify offline restart on an isolated Docker network
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          override="$(mktemp /tmp/cloudforge-offline-XXXXXX.yaml)"
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker compose -f compose.yaml -f "$override" logs --tail=80 || true; fi; docker compose -f compose.yaml -f "$override" down --remove-orphans; rm -f "$override"' EXIT
+          printf 'networks:\n  internal:\n    internal: true\n' > "$override"
+          docker compose down
+          docker compose -f compose.yaml -f "$override" up -d --no-build --pull never
+          test "$(docker network inspect cloudforge-onprem_internal --format '{{.Internal}}')" = "true"
+          for attempt in $(seq 1 60); do
+            if docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e 'fetch("http://"+require("node:os").hostname()+":3000/api/health/ready",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)console.error("Readiness HTTP",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error("Readiness probe:",e.cause?.code||e.name);process.exit(1)})'; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e 'fetch("http://"+require("node:os").hostname()+":3000/api/health/ready",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)console.error("Readiness HTTP",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error("Readiness probe:",e.cause?.code||e.name);process.exit(1)})'
+          echo "Offline restart verified using preloaded images and an internal-only Docker network."
+          # The signing key exists only on this disposable CI runner, never in the app container.
+          organization_id=$(docker compose -f compose.yaml -f "$override" exec -T postgres sh -ec 'export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"; psql -U cloudforge_admin -d cloudforge -Atc "SELECT id FROM organizations"')
+          owner_id=$(node -p 'JSON.parse(require("fs").readFileSync("/tmp/cloudforge-bootstrap.json","utf8")).user.id')
+          docker compose -f compose.yaml -f "$override" exec -T postgres sh -ec 'export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"; psql -U cloudforge_admin -d cloudforge -v ON_ERROR_STOP=1 -v owner="$1"' sh "$owner_id" <<'SQL'
+          INSERT INTO platform_owners(user_id) VALUES (:'owner');
+          INSERT INTO platform_owner_events(user_id,database_role,action) VALUES (:'owner',current_user,'granted');
+          SQL
+          node --input-type=module - "$organization_id" <<'JS' > /tmp/cloudforge-ci-licenses.json
+          import { readFileSync } from "node:fs";
+          import { sign, randomUUID } from "node:crypto";
+          const organizationId=process.argv[2];
+          const key=readFileSync("/tmp/cloudforge-ci-private.pem");
+          const now=Date.now();
+          const date=(offset)=>new Date(now+offset).toISOString();
+          const base={version:1,licenseId:randomUUID(),organizationId,licenseType:"air_gapped",tier:"standard",seatLimit:5,modules:["inventory"],issuedAt:date(-86400000),activatedAt:date(-86400000),expiresAt:date(86400000)};
+          const renewal={...base,licenseId:randomUUID(),seatLimit:10,modules:["inventory","engineering"],issuedAt:date(-3600000),activatedAt:date(-3600000),expiresAt:date(172800000)};
+          const envelope=(claims)=>{const bytes=Buffer.from(JSON.stringify(claims));return {organizationId,payload:bytes.toString("base64url"),signature:sign(null,bytes,key).toString("base64url")};};
+          console.log(JSON.stringify({initial:envelope(base),renewal:envelope(renewal),renewalId:renewal.licenseId}));
+          JS
+          docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e '
+            const assert=require("node:assert/strict");
+            const fixture=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
+            const base="http://"+require("node:os").hostname()+":3000";
+            (async()=>{
+              const login=await fetch(base+"/api/auth/login",{method:"POST",headers:{Origin:"http://localhost:3000","Content-Type":"application/json"},body:JSON.stringify({email:"ci-owner@example.test",password:"Strong-CI-Account-2026!"})});
+              assert.equal(login.status,200);
+              const cookie=login.headers.get("set-cookie").split(";")[0];
+              const headers={Origin:"http://localhost:3000","Content-Type":"application/json",Cookie:cookie};
+              const install=async(body,status)=>{const r=await fetch(base+"/api/platform/licenses",{method:"POST",headers,body:JSON.stringify(body)});assert.equal(r.status,status);return r.json();};
+              await install(fixture.initial,201);
+              await install(fixture.renewal,201);
+              await install(fixture.renewal,200);
+              await install(fixture.initial,409);
+              const r=await fetch(base+"/api/platform/licenses?organizationId="+fixture.initial.organizationId,{headers});
+              assert.equal(r.status,200);
+              const {license}=await r.json();
+              assert.equal(license.claims.licenseId,fixture.renewalId);
+              assert.equal(license.claims.seatLimit,10);
+              assert.deepEqual(license.claims.modules,["inventory","engineering"]);
+              assert.equal(license.timeStatus,"active");
+              console.log("Offline HTTP license activation and renewal verified.");
+            })().catch(e=>{console.error(e);process.exitCode=1});
+          ' < /tmp/cloudforge-ci-licenses.json
+          rm -f /tmp/cloudforge-ci-private.pem /tmp/cloudforge-ci-licenses.json
+
+      - name: Diagnostic logs on failure
+        if: failure()
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: docker compose logs --tail=80
+      - name: Remove disposable containers and test volumes
+        if: always()
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: docker compose down -v --remove-orphans

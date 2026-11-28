@@ -173,6 +173,16 @@ describe("migrations", () => {
       "009_phase5_failed_login_audit.sql",
       "010_phase5_industrial_gateways.sql",
       "011_phase5_alarm_source_state.sql",
+      "012_organization_foundation.sql",
+      "013_engineering_direct_uploads.sql",
+      "014_session_organization_binding.sql",
+      "015_cross_organization_references.sql",
+      "016_tenant_row_security.sql",
+      "017_organization_business_keys.sql",
+      "018_explicit_memberships_and_invitations.sql",
+      "019_inventory_auto_reorder.sql",
+      "020_totp_mfa_recovery.sql",
+      "021_mfa_device_recovery.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -195,11 +205,13 @@ describe("migrations", () => {
       "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",
       "maintenance_work_order_cost_events", "maintenance_work_order_events", "maintenance_work_order_parts",
       "maintenance_work_orders",
+      "organization_invitations",
+      "organization_license_events", "organization_licenses", "organization_memberships", "organizations", "platform_owner_events", "platform_owners",
       "production_downtime", "production_events", "production_job_assignments", "production_jobs",
       "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",
       "project_milestones", "project_resources", "project_task_dependencies", "project_tasks",
       "projects", "purchase_order_lines", "purchase_orders", "purchase_receipts", "purchase_requests",
-      "schema_migrations", "sessions", "suppliers", "users",
+      "schema_migrations", "sessions", "suppliers", "user_mfa_recovery_codes", "users",
     ]);
     const indexes = await testPool().query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
     const names = indexes.rows.map((r) => r.indexname);
