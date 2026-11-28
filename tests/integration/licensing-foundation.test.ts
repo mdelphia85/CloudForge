@@ -60,6 +60,23 @@ it("restricts offline license installation to explicitly provisioned platform ow
     expect((await testPool().query("SELECT action,actor_user_id FROM organization_license_events")).rows)
       .toEqual([{ action: "installed", actor_user_id: admin.body.user.id }]);
     expect((await testPool().query("SELECT action FROM platform_owner_events")).rows).toEqual([{ action: "granted" }]);
+    const renewal = {
+      ...claims, licenseId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      issuedAt: "2026-01-04T00:00:00.000Z", activatedAt: "2026-01-04T00:00:00.000Z",
+      expiresAt: "2031-01-01T00:00:00.000Z", seatLimit: 20,
+      modules: ["inventory", "engineering", "production"],
+    };
+    expect((await install(renewal)).status).toBe(201);
+    expect((await install(renewal)).status).toBe(200);
+    const renewed = await call(licenses.GET, { cookie: admin.sessionCookie, path: `/api/platform/licenses?organizationId=${organizationId}` });
+    expect(renewed.body.license).toMatchObject({ claims: renewal, timeStatus: "active" });
+    expect((await install(claims)).status).toBe(409);
+    const history = await testPool().query("SELECT license_id,action,actor_user_id FROM organization_license_events ORDER BY license_id");
+    expect(history.rows).toEqual([
+      { license_id: claims.licenseId, action: "installed", actor_user_id: admin.body.user.id },
+      { license_id: renewal.licenseId, action: "installed", actor_user_id: admin.body.user.id },
+    ]);
+
   } finally {
     vi.unstubAllEnvs();
   }
