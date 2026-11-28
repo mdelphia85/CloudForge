@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { formatDisplayLabel } from "@/lib/display-label";
 
 type Row = Record<string, unknown>;
 type User = { id: string; displayName: string; role: "admin" | "operator" | "viewer" };
@@ -75,7 +76,7 @@ function Table({ rows, columns, actions }: {
         {actions && <th className="px-3 py-2">Actions</th>}
       </tr></thead>
       <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)} className="border-b border-slate-100">
-        {columns.map(([key]) => <td key={key} className="whitespace-nowrap px-3 py-2">{value(row, key)}</td>)}
+        {columns.map(([key]) => <td key={key} className="whitespace-nowrap px-3 py-2">{key === "kind" || key === "linkType" ? formatDisplayLabel(value(row, key)) : value(row, key)}</td>)}
         {actions && <td className="px-3 py-2">{actions(row)}</td>}
       </tr>)}
       {!rows.length && <tr><td colSpan={columns.length + (actions ? 1 : 0)} className="px-3 py-6 text-center text-slate-500">No records yet.</td></tr>}
@@ -451,7 +452,7 @@ export default function Phase3Workspace() {
                 <p><strong>Reason:</strong> {value(row, "reason")}</p>
                 <p><strong>What changed:</strong> {value(row, "changeSummary")}</p>
                 <p><strong>Implementation:</strong> {value(row, "implementationNotes")}</p>
-                <p><strong>Linked records:</strong> {links.map((link) => `${value(link, "type")} ${value(link, "id")}`).join(", ") || "—"}</p>
+                <p><strong>Linked records:</strong> {links.map((link) => `${formatDisplayLabel(value(link, "type"))} ${value(link, "id")}`).join(", ") || "—"}</p>
                 <Table rows={(row.approvals as Row[]) ?? []} columns={[["action","Action"],["actorName","Actor"],["notes","Notes"],["createdAt","Date"]]}/>
                 <Table rows={(row.implementationEvidence as Row[]) ?? []} columns={[
                   ["linkType","Record type"],["documentTitle","Document"],["revision","Document revision"],
@@ -671,7 +672,7 @@ export default function Phase3Workspace() {
             revisionId: form.get("revisionId"), result: form.get("result"), notes: form.get("notes"), idempotencyKey: crypto.randomUUID(),
           }))} className="grid gap-3 md:grid-cols-2">
             <SelectField name="revisionId" label="Approved release" required options={((service.approvedPrograms as Row[]) ?? []).map((row) => ({
-              value: String(row.revision_id), label: `${value(row, "kind")} · ${value(row, "title")} · rev ${value(row, "revision")}`,
+              value: String(row.revision_id), label: `${formatDisplayLabel(value(row, "kind"))} · ${value(row, "title")} · rev ${value(row, "revision")}`,
             }))}/>
             <SelectField name="result" label="Installation outcome" required options={[
               { value: "installed", label: "Installed" }, { value: "failed", label: "Failed" }, { value: "rolled_back", label: "Rolled back" },
