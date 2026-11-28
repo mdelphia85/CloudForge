@@ -101,6 +101,7 @@ export default function OperationsWorkspace(){
   const [overview,setOverview]=useState<Overview|null>(null);
   const [stock,setStock]=useState<{sku:string;name:string}[]>([]);
   const [releases,setReleases]=useState<Release[]>([]);
+  const [schematics,setSchematics]=useState<Release[]>([]);
   const [active,setActive]=useState<Resource>("projects");
   const [showForm,setShowForm]=useState(false);
   const [busy,setBusy]=useState(false);
@@ -115,14 +116,16 @@ export default function OperationsWorkspace(){
   const [productionAction,setProductionAction]=useState("start");
 
   const refresh=useCallback(async()=>{
-    const [data,items,approved]=await Promise.all([
+    const [data,items,approved,approvedSchematics]=await Promise.all([
       request<Overview>("/api/operations/overview"),
       request<{items:{sku:string;name:string}[]}>("/api/inventory"),
       request<{releases:Release[]}>("/api/engineering/releases"),
+      request<{files:Release[]}>("/api/engineering/field-schematics"),
     ]);
     setOverview(data);
     setStock([...new Map(items.items.map(x=>[x.sku,x])).values()]);
     setReleases(approved.releases);
+    setSchematics(approvedSchematics.files);
   },[]);
 
   useEffect(()=>{
@@ -226,6 +229,8 @@ export default function OperationsWorkspace(){
   const selectedProduction=overview?.production.find(x=>x.id===focusedJob);
   const selectedService=overview?.service.find(x=>x.id===focusedService);
   const matchingReleases=releases.filter(r=>r.asset_id===selectedService?.asset_id ||
+    (r.asset_id===null && r.project_id!==null && r.project_id===selectedService?.project_id));
+  const matchingSchematics=schematics.filter(r=>r.asset_id===selectedService?.asset_id ||
     (r.asset_id===null && r.project_id!==null && r.project_id===selectedService?.project_id));
 
   if(loading)return <main className="min-h-screen grid place-items-center bg-slate-100 text-slate-600">Connecting to CloudForge operations…</main>;
@@ -420,6 +425,12 @@ export default function OperationsWorkspace(){
             <span><b>{titleize(r.kind)}</b> · {r.title} · rev {r.revision}</span>
             {(user.role==="admin"||user.role==="operator")&&<a className="text-teal-700 font-semibold flex items-center gap-1" href={"/api/engineering/revisions/"+r.id}><Download size={13}/> Download</a>}
           </div>)}</div>
+          <h3 className="font-bold text-sm">Approved Electrical & Mechanical Schematics</h3>
+          {!matchingSchematics.length&&<p className="text-xs text-slate-500">No approved schematics are associated with this service work.</p>}
+          {matchingSchematics.map(r=><div key={r.id} className="flex flex-wrap justify-between gap-3 border rounded-lg p-3 text-xs">
+            <span><b>{engineeringKindLabel(r.kind)}</b> · {r.title} · revision {r.revision}</span>
+            <a href={"/api/engineering/revisions/"+r.id} className="text-teal-700 font-semibold flex gap-1 items-center"><Download size={13}/> Download Approved Drawing</a>
+          </div>)}
           <h3 className="font-bold text-sm">Recorded field installations</h3>
           {!installs.length&&<p className="text-xs text-slate-500">No installed revisions recorded yet.</p>}
           {installs.map(i=><p className="text-xs border-b py-2" key={i.id}><b>{titleize(i.result)}</b> · {i.document_title} rev {i.revision} · {i.technician} · {new Date(i.performed_at).toLocaleString()} {i.notes?" · "+i.notes:""}</p>)}
