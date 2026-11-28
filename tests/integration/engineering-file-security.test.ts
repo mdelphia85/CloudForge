@@ -107,3 +107,13 @@ it("streams original bytes and rejects infected or malformed scanner responses",
     }
   }
 });
+
+it.skipIf(process.env.CLOUDFORGE_CI_REAL_SCANNER!=="true")("validates clean and EICAR test files against real ClamAV",async()=>{
+  process.env.CLOUDFORGE_ENGINEERING_MALWARE_SCAN_REQUIRED="true";
+  process.env.CLOUDFORGE_CLAMAV_HOST="127.0.0.1";
+  process.env.CLOUDFORGE_CLAMAV_PORT="3310";
+  expect(await engineeringScannerReady()).toBe(true);
+  await expect(scanEngineeringFile(Buffer.from("CloudForge clean engineering test"))).resolves.toBeUndefined();
+  const eicar=Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*");
+  await expect(scanEngineeringFile(eicar)).rejects.toMatchObject({status:415,code:"ENGINEERING_FILE_REJECTED"});
+},65000);
