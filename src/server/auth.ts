@@ -11,6 +11,7 @@ export type AuthenticatedUser = {
   role: UserRole;
   organizationId: string;
   mfaEnabled: boolean;
+  mfaRecoveryAuthenticated: boolean;
 };
 
 const SESSION_COOKIE = "cloudforge_session";
@@ -47,7 +48,7 @@ export function sessionCookieOptions() {
   };
 }
 
-export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number, mfaVerified = false): Promise<{organizationId:string;role:UserRole}> {
+export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number, mfaVerified = false, mfaRecoveryAuthenticated=false): Promise<{organizationId:string;role:UserRole}> {
   return inTransaction(async (client) => {
     const user = await client.query<{ is_active: boolean; session_epoch: number; mfa_enabled:boolean }>(
       "SELECT is_active, session_epoch, mfa_enabled FROM users WHERE id = $1 FOR UPDATE",
@@ -72,9 +73,10 @@ export async function createSession(userId: string, token: string, action = "aut
       throw new HttpError(403, "NO_ACTIVE_ORGANIZATION", "No active organization membership is available.");
     }
     await client.query(
-      `INSERT INTO sessions (token_hash, user_id, organization_id, expires_at,mfa_verified)
-       VALUES ($1, $2, $3, now() + ($4 * interval '1 second'),$5)`,
-      [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS,mfaVerified],
+      `INSERT INTO sessions (token_hash, user_id, organization_id, expires_at,mfa_verified,mfa_recovery_authenticated)
+       VALUES ($1, $2, $3, now() + ($4 * interval '1 second'),$5,$6)`,
+      [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS,
+        mfaVerified,mfaRecoveryAuthenticated],
     );
     await client.query(
       `INSERT INTO audit_events (actor_user_id, organization_id, action, entity_type, entity_id)
@@ -108,7 +110,8 @@ export async function getAuthenticatedUser(request: Request): Promise<Authentica
 
   const result = await getPool().query<AuthenticatedUser>(
     `SELECT u.id, u.email, u.display_name AS "displayName",
-            m.role, m.organization_id AS "organizationId",u.mfa_enabled AS "mfaEnabled"
+            m.role, m.organization_id AS "organizationId",u.mfa_enabled AS "mfaEnabled",
+            s.mfa_recovery_authenticated AS "mfaRecoveryAuthenticated"
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN organization_memberships m ON m.user_id = u.id AND m.organization_id = s.organization_id
