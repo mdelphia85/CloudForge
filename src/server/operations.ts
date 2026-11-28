@@ -253,7 +253,7 @@ export async function createResource(resource: Resource, payload: Record<string,
       values,
     );
     const id=result.rows[0].id;
-    if (resource === "assets") await initializeSimulatedTelemetry(client,id,user.id);
+    if (resource === "assets") await initializeSimulatedTelemetry(client,id,user.id,user.organizationId);
     await audit(client,user,spec.label+".created",spec.table,id);
     return {id};
   });
