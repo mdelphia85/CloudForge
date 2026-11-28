@@ -58,9 +58,10 @@ export async function POST(request: Request) {
     });
 
     const sessionToken = newSessionToken();
-    await createSession(user.id, sessionToken, "auth.bootstrap");
+    const membership=await createSession(user.id, sessionToken, "auth.bootstrap");
     const response = NextResponse.json({
-      user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
+      user: { id: user.id, email: user.email, displayName: user.display_name,
+        role: membership.role, organizationId: membership.organizationId },
     }, { status: 201 });
     response.cookies.set("cloudforge_session", sessionToken, sessionCookieOptions());
     return response;
