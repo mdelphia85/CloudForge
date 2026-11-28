@@ -254,7 +254,7 @@ it("keeps automatic replenishment requests separate under the restricted multi-c
   const path="/api/inventory/reorder";
   const enable=(cookie:string,qty:string)=>call(reorder.PATCH,{
     method:"PATCH",path,cookie,body:{
-      sku:sameSku,enabled:true,reorderPoint:"10",replenishQuantity:qty,
+      sku:sameSku,enabled:true,reorderPoint:"25",replenishQuantity:qty,
     },
   });
   const forA=await enable(a.admin.cookie,"15");
