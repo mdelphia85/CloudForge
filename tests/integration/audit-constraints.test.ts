@@ -179,6 +179,7 @@ describe("migrations", () => {
       "015_cross_organization_references.sql",
       "016_tenant_row_security.sql",
       "017_organization_business_keys.sql",
+      "018_explicit_memberships_and_invitations.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
@@ -201,6 +202,7 @@ describe("migrations", () => {
       "maintenance_plan_checklist", "maintenance_plans", "maintenance_work_order_checklist",
       "maintenance_work_order_cost_events", "maintenance_work_order_events", "maintenance_work_order_parts",
       "maintenance_work_orders",
+      "organization_invitations",
       "organization_license_events", "organization_licenses", "organization_memberships", "organizations", "platform_owner_events", "platform_owners",
       "production_downtime", "production_events", "production_job_assignments", "production_jobs",
       "production_shifts", "production_work_centers", "project_cost_entries", "project_milestone_dependencies",

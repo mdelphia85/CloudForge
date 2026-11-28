@@ -46,8 +46,8 @@ export function sessionCookieOptions() {
   };
 }
 
-export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number): Promise<void> {
-  await inTransaction(async (client) => {
+export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number): Promise<{organizationId:string;role:UserRole}> {
+  return inTransaction(async (client) => {
     const user = await client.query<{ is_active: boolean; session_epoch: number }>(
       "SELECT is_active, session_epoch FROM users WHERE id = $1 FOR UPDATE",
       [userId],
@@ -56,8 +56,8 @@ export async function createSession(userId: string, token: string, action = "aut
       throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
     }
 
-    const membership = await client.query<{ organization_id: string }>(
-      `SELECT m.organization_id FROM organization_memberships m
+    const membership = await client.query<{ organization_id: string; role: UserRole }>(
+      `SELECT m.organization_id,m.role FROM organization_memberships m
          JOIN organizations o ON o.id=m.organization_id
         WHERE m.user_id=$1 AND o.status='active'
         ORDER BY m.created_at, m.organization_id
@@ -77,6 +77,7 @@ export async function createSession(userId: string, token: string, action = "aut
        VALUES ($1, $2, 'user', $1)`,
       [userId, action],
     );
+    return {organizationId:membership.rows[0].organization_id,role:membership.rows[0].role};
   });
 }
 

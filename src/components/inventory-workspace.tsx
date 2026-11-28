@@ -1,6 +1,7 @@
 "use client";
 
 import OrganizationSwitcher from "@/components/organization-switcher";
+import Link from "next/link";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -257,6 +258,7 @@ export default function InventoryWorkspace() {
             <span className="sync-status"><i />Connected</span>
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => { setError(""); setModal("user"); }}><Users size={15} /> Add user</button>}
             {user.role === "admin" && <button className="secondary-button compact-button" onClick={() => void loadAccounts()}><Users size={15} /> Manage accounts</button>}
+            {user.role === "admin" && <Link href="/organization/members" className="secondary-button compact-button"><Users size={15} /> Organization Members</Link>}
             <button className="icon-button" aria-label="Refresh inventory" onClick={() => void refreshItems().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Refresh failed."))}><RefreshCw size={17} /></button>
             <button className="icon-button mobile-signout" aria-label="Sign out" onClick={() => void signOut()} disabled={saving}><LogOut size={15} /></button>
           </div>

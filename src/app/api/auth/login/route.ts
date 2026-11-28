@@ -46,8 +46,9 @@ export async function POST(request: Request) {
     await clearLoginFailures(email);
 
     const sessionToken = newSessionToken();
+    let membership: {organizationId:string;role:"admin"|"operator"|"viewer"};
     try {
-      await createSession(user.id, sessionToken, "auth.login", user.session_epoch);
+      membership=await createSession(user.id, sessionToken, "auth.login", user.session_epoch);
     } catch (error) {
       if (error instanceof HttpError && error.code === "INVALID_CREDENTIALS") {
         await recordFailedLogin(email);
@@ -55,7 +56,8 @@ export async function POST(request: Request) {
       throw error;
     }
     const response = NextResponse.json({
-      user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
+      user: { id: user.id, email: user.email, displayName: user.display_name,
+        role: membership.role, organizationId: membership.organizationId },
     });
     response.cookies.set("cloudforge_session", sessionToken, sessionCookieOptions());
     return response;
