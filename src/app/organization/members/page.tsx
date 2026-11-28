@@ -21,6 +21,7 @@ export default function OrganizationMembersPage() {
   const [notice,setNotice]=useState("");
   const [inviteLink,setInviteLink]=useState("");
   const [busy,setBusy]=useState(false);
+  const [checkedAt,setCheckedAt]=useState<number|null>(null);
 
   const refresh=useCallback(async()=>{
     const [u,i]=await Promise.all([
@@ -30,7 +31,14 @@ export default function OrganizationMembersPage() {
     setUsers(u.users);
     setInvitations(i.invitations);
   },[]);
-  useEffect(()=>{void refresh().catch(e=>setError(e instanceof Error?e.message:"Unable to load members."));},[refresh]);
+  useEffect(()=>{
+    let active=true;
+    void Promise.resolve().then(async()=>{
+      try {await refresh();if(active)setCheckedAt(Date.now());}
+      catch(e){if(active)setError(e instanceof Error?e.message:"Unable to load members.");}
+    });
+    return ()=>{active=false;};
+  },[refresh]);
 
   async function invite(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -150,7 +158,7 @@ export default function OrganizationMembersPage() {
           <th className="p-2">Email</th><th className="p-2">Role</th><th className="p-2">Status</th><th className="p-2">Expires</th><th className="p-2">Action</th>
         </tr></thead><tbody>{invitations.map(invite=>{
           const status=invite.acceptedAt?"Accepted":invite.revokedAt?"Revoked":
-            new Date(invite.expiresAt).getTime()<=Date.now()?"Expired":"Pending";
+            checkedAt!==null&&new Date(invite.expiresAt).getTime()<=checkedAt?"Expired":"Pending";
           return <tr key={invite.id} className="border-b"><td className="p-2">{invite.email}</td>
             <td className="p-2">{invite.role}</td><td className="p-2">{status}</td>
             <td className="p-2 whitespace-nowrap">{new Date(invite.expiresAt).toLocaleDateString()}</td>
