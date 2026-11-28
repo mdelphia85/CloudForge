@@ -154,6 +154,12 @@ it("replaces a lost MFA device ONLY from a one-use-recovery-authenticated sessio
   const replacementSecret=String(replacement.body.secret);
   expect(replacementSecret).toMatch(/^[A-Z2-7]{32}$/);
   expect(replacementSecret).not.toBe(secret);
+  const unauthorizedCompletion=await call(mfaVerify.POST,{
+    method:"POST",path:pathVerify,cookie:normal.sessionCookie,
+    body:{code:totpAt(replacementSecret,Math.floor(Date.now()/30000))},
+  });
+  expect(unauthorizedCompletion.status).toBe(403);
+  expect(unauthorizedCompletion.body.code).toBe("MFA_RECOVERY_REQUIRED");
   const completed=await call(mfaVerify.POST,{
     method:"POST",path:pathVerify,cookie:recovered.sessionCookie,
     body:{code:totpAt(replacementSecret,Math.floor(Date.now()/30000))},
