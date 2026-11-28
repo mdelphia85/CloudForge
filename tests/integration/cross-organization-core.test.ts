@@ -96,3 +96,23 @@ it("does not reveal or modify another company's stock using SKU or movement reco
   );
   expect(stock.rows[0].on_hand).toBe("100.000");
 });
+
+it("database foreign keys reject cross-company inventory and engineering references",async()=>{
+  const originalOrg = (await testPool().query<{ id:string }>(
+    "SELECT id FROM organizations WHERE identifier='existing-installation'",
+  )).rows[0].id;
+  await expect(testPool().query(
+    `INSERT INTO engineering_documents(organization_id,project_id,title,kind,created_by)
+      VALUES($1,$2,'Illegitimate Cross-Tenant Drawing','drawing',$3)`,
+    [originalOrg,otherProjectId,actors.admin.id],
+  )).rejects.toMatchObject({code:"23503"});
+  const itemId=(await testPool().query<{id:string}>(
+    "SELECT id FROM inventory_items WHERE organization_id=$1 AND sku=$2",
+    [otherOrgId,otherSku],
+  )).rows[0].id;
+  await expect(testPool().query(
+    `INSERT INTO inventory_stock(organization_id,item_id,location,bin,on_hand,updated_by)
+      VALUES($1,$2,'Wrong Tenant','W-1',1,$3)`,
+    [originalOrg,itemId,actors.admin.id],
+  )).rejects.toMatchObject({code:"23503"});
+});
