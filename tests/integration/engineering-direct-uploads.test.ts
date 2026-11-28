@@ -31,7 +31,7 @@ async function directUpload(
   form.set("notes", "Initial engineering draft");
   if (options.projectId !== null) form.set("projectId", options.projectId ?? projectId);
   if (options.assetId !== null) form.set("assetId", options.assetId ?? assetId);
-  form.set("file", new File([options.fileBytes ?? bytes], options.fileName ?? "native-project.bin"));
+  form.set("file", new File([new Uint8Array(Array.from(options.fileBytes ?? bytes))], options.fileName ?? "native-project.bin"));
   return upload.POST(new Request(ORIGIN + "/api/engineering/uploads", {
     method: "POST", headers: { origin: ORIGIN, cookie }, body: form,
   }));
