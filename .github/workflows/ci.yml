@@ -260,6 +260,25 @@ jobs:
           test "$integrity" = "1"
           rm -rf -- /tmp/cloudforge-ci-encrypted /tmp/cloudforge-ci-recovery.key
           echo "Encrypted backup and clean-room restore accepted."
+      - name: Verify offline restart on an isolated Docker network
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          override="$(mktemp /tmp/cloudforge-offline-XXXXXX.yaml)"
+          trap 'docker compose -f compose.yaml -f "$override" down --remove-orphans; rm -f "$override"' EXIT
+          printf 'networks:\n  internal:\n    internal: true\n' > "$override"
+          docker compose down
+          docker compose -f compose.yaml -f "$override" up -d --no-build --pull never
+          test "$(docker network inspect cloudforge-onprem_internal --format '{{.Internal}}')" = "true"
+          for attempt in $(seq 1 60); do
+            if docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e 'fetch("http://127.0.0.1:3000/api/health/ready").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e 'fetch("http://127.0.0.1:3000/api/health/ready").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'
+          echo "Offline restart verified using preloaded images and an internal-only Docker network."
       - name: Diagnostic logs on failure
         if: failure()
         env:
