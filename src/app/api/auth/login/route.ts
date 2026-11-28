@@ -46,8 +46,11 @@ export async function POST(request: Request) {
       throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
     }
     let mfaVerified=false;
+    let mfaRecoveryAuthenticated=false;
     if(user.mfa_enabled) {
-      mfaVerified=await verifyLoginMfa(user.id,body.mfaCode);
+      const verifiedMethod=await verifyLoginMfa(user.id,body.mfaCode);
+      mfaVerified=Boolean(verifiedMethod);
+      mfaRecoveryAuthenticated=verifiedMethod==="recovery";
       if(!mfaVerified) {
         const blocked=await recordFailedLogin(email);
         if(blocked)throw new HttpError(429,"TOO_MANY_ATTEMPTS","Too many sign-in attempts. Try again later.");
@@ -59,7 +62,8 @@ export async function POST(request: Request) {
     const sessionToken = newSessionToken();
     let membership: {organizationId:string;role:"admin"|"operator"|"viewer"};
     try {
-      membership=await createSession(user.id, sessionToken, "auth.login", user.session_epoch,mfaVerified);
+      membership=await createSession(user.id, sessionToken, "auth.login", user.session_epoch,
+        mfaVerified,mfaRecoveryAuthenticated);
     } catch (error) {
       if (error instanceof HttpError && error.code === "INVALID_CREDENTIALS") {
         await recordFailedLogin(email);
@@ -69,7 +73,7 @@ export async function POST(request: Request) {
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, displayName: user.display_name,
         role: membership.role, organizationId: membership.organizationId,
-        mfaEnabled:user.mfa_enabled },
+        mfaEnabled:user.mfa_enabled,mfaRecoveryAuthenticated },
     });
     response.cookies.set("cloudforge_session", sessionToken, sessionCookieOptions());
     return response;
