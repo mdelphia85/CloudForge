@@ -16,6 +16,22 @@ export async function GET() {
         { status: 503 },
       );
     }
+    // A shared SaaS instance must never run tenant RLS as PostgreSQL superuser
+    // or a role with BYPASSRLS, even if FORCE RLS was applied to all tables.
+    if (process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED === "true") {
+      const db = await getPool().query<{ superuser: boolean; bypass: boolean }>(
+        "SELECT rolsuper AS superuser, rolbypassrls AS bypass FROM pg_roles WHERE rolname=current_user",
+      );
+      const role = db.rows[0];
+      const migrations = await getPool().query<{ count: number }>(
+        "SELECT COUNT(*)::int AS count FROM schema_migrations WHERE name IN " +
+          "('012_organization_foundation.sql','014_session_organization_binding.sql'," +
+          "'015_cross_organization_references.sql','016_tenant_row_security.sql')",
+      );
+      if (!role || role.superuser || role.bypass || migrations.rows[0]?.count !== 4) {
+        return NextResponse.json({ status: "not_ready", service: "cloud-forge" }, { status: 503 });
+      }
+    }
     return NextResponse.json({ status: "ready", service: "cloud-forge" });
   } catch (error) {
     console.error("Readiness check failed.", error);
