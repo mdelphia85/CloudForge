@@ -173,6 +173,7 @@ describe("migrations", () => {
       "009_phase5_failed_login_audit.sql",
       "010_phase5_industrial_gateways.sql",
       "011_phase5_alarm_source_state.sql",
+      "013_engineering_direct_uploads.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
