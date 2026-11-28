@@ -127,10 +127,15 @@ beforeAll(async()=>{
        VALUES($1,$2,'Sanding Robot','Example Manufacturer',$3)`,
     [aOrg,projectCode,a.admin.id],
   );
-  await testPool().query(
+  const initialStock=await testPool().query<{id:string}>(
     `INSERT INTO inventory_items(organization_id,sku,name,category,unit,reorder_point,created_by)
-       VALUES($1,$2,'Org A Bolts','Electrical','ea',2,$3)`,
+       VALUES($1,$2,'Org A Bolts','Electrical','ea',2,$3) RETURNING id`,
     [aOrg,sameSku,a.admin.id],
+  );
+  await testPool().query(
+    `INSERT INTO inventory_stock(organization_id,item_id,location,bin,on_hand,updated_by)
+       VALUES($1,$2,'Plant A','A-01',20,$3)`,
+    [aOrg,initialStock.rows[0].id,a.admin.id],
   );
 
   // Rebind only the APPLICATION connection to the restricted role. The harness
