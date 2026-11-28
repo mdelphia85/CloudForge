@@ -162,9 +162,9 @@ export async function completeMfaEnrollment(
     await client.query(
       `UPDATE users SET mfa_secret_encrypted=mfa_pending_secret_encrypted,
         mfa_enabled=true,mfa_pending_secret_encrypted=NULL,
-        mfa_pending_expires_at=NULL,mfa_last_counter=$2,session_epoch=session_epoch+1
+        mfa_pending_expires_at=NULL,mfa_last_counter=-1,session_epoch=session_epoch+1
        WHERE id=$1`,
-      [userId,matched],
+      [userId],
     );
     for(const recoveryCode of codes) {
       await client.query(
