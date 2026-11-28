@@ -127,7 +127,6 @@ jobs:
           openssl rand -hex 32 > secrets/mfa-encryption-key.txt
           openssl genpkey -algorithm Ed25519 -out /tmp/cloudforge-ci-private.pem
           openssl pkey -in /tmp/cloudforge-ci-private.pem -pubout -out secrets/license-public-key.pem
-          rm -f /tmp/cloudforge-ci-private.pem
       - name: Build and launch disposable on-premises stack
         env:
           APP_ORIGIN: http://localhost:3000
@@ -279,6 +278,51 @@ jobs:
           done
           docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e 'fetch("http://"+require("node:os").hostname()+":3000/api/health/ready",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)console.error("Readiness HTTP",r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error("Readiness probe:",e.cause?.code||e.name);process.exit(1)})'
           echo "Offline restart verified using preloaded images and an internal-only Docker network."
+          # The signing key exists only on this disposable CI runner, never in the app container.
+          organization_id=$(docker compose -f compose.yaml -f "$override" exec -T postgres sh -ec 'export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"; psql -U cloudforge_admin -d cloudforge -Atc "SELECT id FROM organizations"')
+          owner_id=$(node -p 'JSON.parse(require("fs").readFileSync("/tmp/cloudforge-bootstrap.json","utf8")).user.id')
+          docker compose -f compose.yaml -f "$override" exec -T postgres sh -ec 'export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"; psql -U cloudforge_admin -d cloudforge -v ON_ERROR_STOP=1 -v owner="$1"' sh "$owner_id" <<'SQL'
+          INSERT INTO platform_owners(user_id) VALUES (:'owner');
+          INSERT INTO platform_owner_events(user_id,database_role,action) VALUES (:'owner',current_user,'granted');
+          SQL
+          node --input-type=module - "$organization_id" <<'JS' > /tmp/cloudforge-ci-licenses.json
+          import { readFileSync } from "node:fs";
+          import { sign, randomUUID } from "node:crypto";
+          const organizationId=process.argv[2];
+          const key=readFileSync("/tmp/cloudforge-ci-private.pem");
+          const now=Date.now();
+          const date=(offset)=>new Date(now+offset).toISOString();
+          const base={version:1,licenseId:randomUUID(),organizationId,licenseType:"air_gapped",tier:"standard",seatLimit:5,modules:["inventory"],issuedAt:date(-86400000),activatedAt:date(-86400000),expiresAt:date(86400000)};
+          const renewal={...base,licenseId:randomUUID(),seatLimit:10,modules:["inventory","engineering"],issuedAt:date(-3600000),activatedAt:date(-3600000),expiresAt:date(172800000)};
+          const envelope=(claims)=>{const bytes=Buffer.from(JSON.stringify(claims));return {organizationId,payload:bytes.toString("base64url"),signature:sign(null,bytes,key).toString("base64url")};};
+          console.log(JSON.stringify({initial:envelope(base),renewal:envelope(renewal),renewalId:renewal.licenseId}));
+          JS
+          docker compose -f compose.yaml -f "$override" exec -T cloudforge node -e '
+            const assert=require("node:assert/strict");
+            const fixture=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
+            const base="http://"+require("node:os").hostname()+":3000";
+            (async()=>{
+              const login=await fetch(base+"/api/auth/login",{method:"POST",headers:{Origin:"http://localhost:3000","Content-Type":"application/json"},body:JSON.stringify({email:"ci-owner@example.test",password:"Strong-CI-Account-2026!"})});
+              assert.equal(login.status,200);
+              const cookie=login.headers.get("set-cookie").split(";")[0];
+              const headers={Origin:"http://localhost:3000","Content-Type":"application/json",Cookie:cookie};
+              const install=async(body,status)=>{const r=await fetch(base+"/api/platform/licenses",{method:"POST",headers,body:JSON.stringify(body)});assert.equal(r.status,status);return r.json();};
+              await install(fixture.initial,201);
+              await install(fixture.renewal,201);
+              await install(fixture.renewal,200);
+              await install(fixture.initial,409);
+              const r=await fetch(base+"/api/platform/licenses?organizationId="+fixture.initial.organizationId,{headers});
+              assert.equal(r.status,200);
+              const {license}=await r.json();
+              assert.equal(license.claims.licenseId,fixture.renewalId);
+              assert.equal(license.claims.seatLimit,10);
+              assert.deepEqual(license.claims.modules,["inventory","engineering"]);
+              assert.equal(license.timeStatus,"active");
+              console.log("Offline HTTP license activation and renewal verified.");
+            })().catch(e=>{console.error(e);process.exitCode=1});
+          ' < /tmp/cloudforge-ci-licenses.json
+          rm -f /tmp/cloudforge-ci-private.pem /tmp/cloudforge-ci-licenses.json
+
       - name: Diagnostic logs on failure
         if: failure()
         env:
