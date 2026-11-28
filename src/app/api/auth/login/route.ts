@@ -3,6 +3,7 @@ import { createSession, newSessionToken, sessionCookieOptions } from "@/server/a
 import { getPool } from "@/server/db";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { verifyPassword } from "@/server/password";
+import { verifyLoginMfa } from "@/server/mfa";
 import { clearLoginFailures, isLoginBlocked, recordBlockedLogin, recordFailedLogin } from "@/server/login-rate-limit";
 
 const DUMMY_HASH = `scrypt$32768$8$1$${"0".repeat(32)}$${"0".repeat(128)}`;
@@ -29,8 +30,9 @@ export async function POST(request: Request) {
       role: "admin" | "operator" | "viewer";
       password_hash: string;
       session_epoch: number;
+      mfa_enabled:boolean;
     }>(
-      `SELECT id, email, display_name, role, password_hash, session_epoch
+      `SELECT id, email, display_name, role, password_hash, session_epoch,mfa_enabled
          FROM users WHERE email = $1 AND is_active = true`,
       [email],
     );
@@ -43,12 +45,21 @@ export async function POST(request: Request) {
       }
       throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
     }
+    let mfaVerified=false;
+    if(user.mfa_enabled) {
+      mfaVerified=await verifyLoginMfa(user.id,body.mfaCode);
+      if(!mfaVerified) {
+        const blocked=await recordFailedLogin(email);
+        if(blocked)throw new HttpError(429,"TOO_MANY_ATTEMPTS","Too many sign-in attempts. Try again later.");
+        throw new HttpError(401,"MFA_REQUIRED","Enter a valid authenticator code or an unused recovery code.");
+      }
+    }
     await clearLoginFailures(email);
 
     const sessionToken = newSessionToken();
     let membership: {organizationId:string;role:"admin"|"operator"|"viewer"};
     try {
-      membership=await createSession(user.id, sessionToken, "auth.login", user.session_epoch);
+      membership=await createSession(user.id, sessionToken, "auth.login", user.session_epoch,mfaVerified);
     } catch (error) {
       if (error instanceof HttpError && error.code === "INVALID_CREDENTIALS") {
         await recordFailedLogin(email);
@@ -57,7 +68,8 @@ export async function POST(request: Request) {
     }
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, displayName: user.display_name,
-        role: membership.role, organizationId: membership.organizationId },
+        role: membership.role, organizationId: membership.organizationId,
+        mfaEnabled:user.mfa_enabled },
     });
     response.cookies.set("cloudforge_session", sessionToken, sessionCookieOptions());
     return response;
