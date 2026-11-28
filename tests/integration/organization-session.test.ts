@@ -80,7 +80,7 @@ it("fails closed when an organization membership is removed", async () => {
 });
 
 it("rejects unverified MFA sessions before organization switching", async () => {
-  await testPool().query("UPDATE users SET mfa_enabled=true WHERE email=$1",[actors.operator.email]);
+  await testPool().query("UPDATE users SET mfa_enabled=true,mfa_secret_encrypted='test-only-opaque-secret' WHERE email=$1",[actors.operator.email]);
   try {
     const request=new Request(ORIGIN,{headers:{cookie:actors.operator.cookie}});
     await expect(switchSessionOrganization(request,organizationId)).rejects.toMatchObject({
@@ -89,6 +89,6 @@ it("rejects unverified MFA sessions before organization switching", async () => 
     const result=await call(context.POST,{method:"POST",cookie:actors.operator.cookie,body:{organizationId}});
     expect(result.status).toBe(401);
   } finally {
-    await testPool().query("UPDATE users SET mfa_enabled=false WHERE email=$1",[actors.operator.email]);
+    await testPool().query("UPDATE users SET mfa_enabled=false,mfa_secret_encrypted=NULL WHERE email=$1",[actors.operator.email]);
   }
 });
