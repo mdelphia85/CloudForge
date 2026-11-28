@@ -56,6 +56,12 @@ services:
       DB_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
       LICENSE_PUBLIC_KEY_FILE: /run/secrets/license_public_key
       BOOTSTRAP_ADMIN_TOKEN_FILE: /run/secrets/bootstrap_token
+      CLOUDFORGE_MFA_ENCRYPTION_KEY_FILE: /run/secrets/mfa_encryption_key
+      CLOUDFORGE_MFA_REQUIRED: ${CLOUDFORGE_MFA_REQUIRED:-false}
+      CLOUDFORGE_MULTI_ORGANIZATION_ENABLED: ${CLOUDFORGE_MULTI_ORGANIZATION_ENABLED:-false}
+      CLOUDFORGE_LICENSE_ENFORCEMENT_REQUIRED: ${CLOUDFORGE_LICENSE_ENFORCEMENT_REQUIRED:-false}
+      CLOUDFORGE_CLAMAV_HOST: ${CLOUDFORGE_CLAMAV_HOST:-}
+      CLOUDFORGE_CLAMAV_PORT: ${CLOUDFORGE_CLAMAV_PORT:-3310}
       APP_ORIGIN: ${APP_ORIGIN:?Set an exact HTTP or HTTPS application origin}
       NODE_ENV: production
       PORT: 3000
@@ -63,6 +69,7 @@ services:
       - postgres_app_password
       - license_public_key
       - bootstrap_token
+      - mfa_encryption_key
     command: ["node", "deploy/onprem/entrypoint.mjs"]
     ports:
       # Bind loopback by default; LAN access uses a customer-managed TLS reverse proxy.
@@ -70,8 +77,19 @@ services:
     networks:
       - internal
 
+  clamav:
+    profiles: ["commercial"]
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    networks:
+      - internal
+    # Private Docker-network scanner only; NEVER publish port 3310 on the host.
+
 volumes:
   postgres_data:
+  clamav_signatures:
 
 networks:
   internal:
@@ -86,3 +104,5 @@ secrets:
     file: ./secrets/license-public-key.pem
   bootstrap_token:
     file: ./secrets/bootstrap-admin-token.txt
+  mfa_encryption_key:
+    file: ./secrets/mfa-encryption-key.txt
