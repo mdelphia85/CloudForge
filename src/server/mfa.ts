@@ -144,7 +144,7 @@ export async function startMfaEnrollment(
 }
 
 export async function completeMfaEnrollment(
-  userId:string,organizationId:string,code:string,
+  userId:string,organizationId:string,code:string,recoveryAuthenticated=false,
 ):Promise<{recoveryCodes:string[]}> {
   return inTransaction(async client=>{
     const result=await client.query<{
@@ -157,6 +157,9 @@ export async function completeMfaEnrollment(
        !row.mfa_pending_expires_at||
        row.mfa_pending_expires_at.getTime()<=Date.now()) {
       throw new HttpError(400,"MFA_SETUP_EXPIRED","Start authenticator setup again.");
+    }
+    if(row.mfa_enabled && !recoveryAuthenticated) {
+      throw new HttpError(403,"MFA_RECOVERY_REQUIRED","A recovery-authenticated session is required to replace an authenticator.");
     }
     const secret=decrypt(row.mfa_pending_secret_encrypted);
     const matched=matchedTotpCounter(secret,code);
