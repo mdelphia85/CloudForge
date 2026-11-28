@@ -27,6 +27,7 @@ const exclusions=new Set([
   "sessions","audit_events","organization_memberships",
   "organization_licenses","organization_license_events",
   "organization_invitations",
+  "industrial_gateways","gateway_allowed_tags","gateway_telemetry_batches",
 ]);
 const expectedMigrations=[
   "012_organization_foundation.sql","013_engineering_direct_uploads.sql",
@@ -86,9 +87,9 @@ async function preflight() {
   // The public schema is controlled by migration scripts. Existing rows must
   // belong to the one original organization; do not reassign data here.
   for(const row of rows.rows) {
-    const escaped=row.relation.replace(/"/g,'""');
+    // pg_catalog::regclass provides an identifier-safe table reference.
     const result=await client.query(
-      `SELECT EXISTS(SELECT 1 FROM "${escaped}" WHERE organization_id IS DISTINCT FROM $1::uuid) AS mismatched`,
+      `SELECT EXISTS(SELECT 1 FROM ${row.relation} WHERE organization_id IS DISTINCT FROM $1::uuid) AS mismatched`,
       [originalOrg],
     );
     if(result.rows[0].mismatched) {
