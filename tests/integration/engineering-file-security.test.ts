@@ -17,7 +17,7 @@ beforeAll(()=>{
   process.env.CLOUDFORGE_ENGINEERING_MALWARE_SCAN_REQUIRED="false";
 });
 afterAll(()=>{
-  const original=[
+  const original:[string,string|undefined][]=[
     ["CLOUDFORGE_ENGINEERING_MALWARE_SCAN_REQUIRED",oldRequired],
     ["CLOUDFORGE_CLAMAV_HOST",oldHost],
     ["CLOUDFORGE_CLAMAV_PORT",oldPort],
