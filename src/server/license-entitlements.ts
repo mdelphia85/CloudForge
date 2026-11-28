@@ -8,12 +8,11 @@ import {
 
 // The policy is server-side only. Calling routes must enforce the organization
 // context from the authenticated session, never from request payload alone.
-export async function requireLicensedModule(
+export async function requireValidatedOrganizationLicense(
   client: PoolClient,
   organizationId: string,
-  module: LicenseModule,
   now = new Date(),
-): Promise<{ claims: LicenseClaims; status: "active" | "grace" }> {
+): Promise<{ claims: LicenseClaims; status: "active" | "grace"; seats: number }> {
   const organization = await client.query<{ status: string }>(
     "SELECT status FROM organizations WHERE id=$1 FOR SHARE",
     [organizationId],
@@ -51,10 +50,6 @@ export async function requireLicensedModule(
     throw new HttpError(402, "LICENSE_NOT_ACTIVE",
       "The organization's license is not active. Contact the license administrator.");
   }
-  if (!claims.modules.includes(module)) {
-    throw new HttpError(403, "MODULE_NOT_LICENSED", "This organization is not licensed for the requested module.");
-  }
-
   const usedSeats = await client.query<{ seats: number }>(
     `SELECT COUNT(*)::int AS seats FROM organization_memberships m
        JOIN users u ON u.id=m.user_id
@@ -65,5 +60,39 @@ export async function requireLicensedModule(
     throw new HttpError(403, "SEAT_LIMIT_EXCEEDED", "The organization exceeds its licensed active-user limit.");
   }
 
-  return { claims, status };
+  return { claims, status, seats: usedSeats.rows[0]?.seats ?? 0 };
+}
+
+export async function requireLicensedModule(
+  client: PoolClient,
+  organizationId: string,
+  module: LicenseModule,
+  now = new Date(),
+): Promise<{ claims: LicenseClaims; status: "active" | "grace" }> {
+  const { claims,status } = await requireValidatedOrganizationLicense(client, organizationId, now);
+  if (!claims.modules.includes(module)) {
+    throw new HttpError(403, "MODULE_NOT_LICENSED",
+      "This organization is not licensed for the requested module.");
+  }
+  return { claims,status };
+}
+
+export async function requireAvailableSeat(client: PoolClient, organizationId: string): Promise<void> {
+  // Lock the organization row first in the caller transaction to serialize
+  // concurrent invitation acceptances and prevent seat-limit races.
+  const organization = await client.query(
+    "SELECT id FROM organizations WHERE id=$1 AND status='active' FOR UPDATE",
+    [organizationId],
+  );
+  if (!organization.rowCount) throw new HttpError(403,"ORGANIZATION_SUSPENDED",
+    "This organization is not active.");
+  const {claims,status,seats} = await requireValidatedOrganizationLicense(client,organizationId);
+  if (status !== "active") {
+    throw new HttpError(402,"RENEW_LICENSE",
+      "Renew the organization's license before inviting or enrolling new users.");
+  }
+  if (seats >= claims.seatLimit) {
+    throw new HttpError(409,"NO_LICENSED_SEATS",
+      "No licensed seats are available for this organization.");
+  }
 }
