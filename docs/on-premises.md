@@ -41,7 +41,12 @@ cross-organization isolation. Do not remove it to serve multiple customers.
    Example: `openssl rand -hex 32 > secrets/mfa-encryption-key.txt`.
    Restrict file permissions to the installation administrator (`chmod 600`).
    Keep an **encrypted, offline recovery copy** of this key with the PostgreSQL
-   recovery materials. If lost, encrypted MFA secrets cannot be decrypted.
+   recovery materials. If lost, encrypted MFA secrets cannot be decrypted. Existing users with
+an unused MFA recovery code may replace an inaccessible authenticator after
+a recovery-code login and password re-verification; this does not solve the
+case where both the authenticator and all recovery codes are gone. Establish
+a dual-authorized identity-proofing and customer-support process before
+commercial launch.
 7. Set `APP_ORIGIN` to the exact URL that end users visit, including
    `http://localhost:3000` only for isolated testing, or an internally managed
    HTTPS hostname for production. Reverse proxy TLS is the deployment owner's
