@@ -116,3 +116,34 @@ export async function scanEngineeringFile(bytes:Uint8Array):Promise<void> {
       "The scanner did not return a verified clean result.");
   }
 }
+
+/** Lightweight fail-closed ClamAV availability check for commercial readiness. */
+export async function engineeringScannerReady():Promise<boolean> {
+  if(!engineeringMalwareScanRequired())return true;
+  const host=process.env.CLOUDFORGE_CLAMAV_HOST ?? "";
+  const port=Number(process.env.CLOUDFORGE_CLAMAV_PORT ?? "3310");
+  if(!/^[A-Za-z0-9][A-Za-z0-9.\-_]{0,252}$/.test(host) ||
+     !Number.isInteger(port)||port<1||port>65535) return false;
+  return new Promise<boolean>(resolve=>{
+    const socket=createConnection({host,port});
+    let finished=false,output="";
+    const done=(value:boolean)=>{
+      if(finished)return;
+      finished=true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(2_000);
+    socket.on("connect",()=>socket.write(Buffer.from("zPING\0")));
+    socket.on("data",chunk=>{
+      output+=chunk.toString("utf8");
+      if(output.length>64)done(false);
+      else if(output.includes("\0")||output.endsWith("\n")) {
+        done(/^PONG[\r\n\0]*$/.test(output));
+      }
+    });
+    socket.on("timeout",()=>done(false));
+    socket.on("error",()=>done(false));
+    socket.on("close",()=>done(false));
+  });
+}
