@@ -29,7 +29,8 @@ function moduleForPath(path: string): LicenseModule | null {
   // The platform-owner control plane must remain accessible to install/renew
   // a license. Never expose customer operations through these routes.
   if (path.startsWith("/api/platform/") || path.startsWith("/api/users/") ||
-      path === "/api/users" || path.startsWith("/api/organizations/invitations")) {
+      path === "/api/users" || (path.startsWith("/api/organizations/invitations") ||
+       path.startsWith("/api/organizations/members"))) {
     return null;
   }
   if (path.startsWith("/api/inventory")) return "inventory";
@@ -68,7 +69,8 @@ export async function enforceRouteLicense(organizationId: string, requestUrl: st
   const licensedModule = moduleForPath(path);
   if (!licensedModule) {
     if (path.startsWith("/api/platform/") || path.startsWith("/api/users") ||
-        path.startsWith("/api/organizations/invitations")) return;
+        (path.startsWith("/api/organizations/invitations") ||
+       path.startsWith("/api/organizations/members"))) return;
     throw new HttpError(403, "UNCLASSIFIED_OPERATION",
       "The requested operation has not been approved for multi-organization licensing.");
   }
