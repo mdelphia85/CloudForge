@@ -5,7 +5,7 @@ const MODULES = new Set([
   "field_service", "equipment", "telemetry",
 ]);
 const LICENSE_TYPES = new Set(["saas", "dedicated", "on_premises", "air_gapped"]);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function canonicalDate(value, field) {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) ||
