@@ -20,7 +20,4 @@ $$;
 ALTER TABLE sessions ALTER COLUMN organization_id SET NOT NULL;
 CREATE INDEX sessions_organization_user_idx ON sessions (organization_id, user_id);
 
--- Keep session organization consistent with membership when joining or switching.
-ALTER TABLE organization_memberships
-  ADD CONSTRAINT organization_memberships_organization_user_unique
-  UNIQUE (organization_id, user_id);
+-- organization_memberships already has a composite primary key (organization_id, user_id).
