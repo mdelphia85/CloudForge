@@ -181,7 +181,7 @@ export default function PlatformLicensing() {
         </form>
         <section className="mt-5 border-t pt-4 space-y-3">
           <h2 className="font-bold">Invite the First Organization Administrator</h2>
-          <p className="text-xs text-slate-600">Install an active, individually signed license before inviting a customer's first admin. You will not automatically gain access to their data.</p>
+          <p className="text-xs text-slate-600">Install an active, individually signed license before inviting a customer&apos;s first admin. You will not automatically gain access to their data.</p>
           <form onSubmit={event=>void inviteFirstAdministrator(event)} className="flex flex-wrap gap-3 items-end">
             <label className="text-sm font-semibold flex-1 min-w-[180px]">Administrator email
               <input name="email" type="email" maxLength={254} required
