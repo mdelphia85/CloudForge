@@ -1,9 +1,10 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { errorResponse, HttpError, readJson, requireSameOrigin } from "@/server/errors";
 import { createMovement, listMovements, parseMovementInput } from "@/server/inventory";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const user=await requireUser(request);
     const sku = new URL(request.url).searchParams.get("sku")?.trim().toUpperCase();
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -34,3 +35,6 @@ export async function POST(request: Request) {
     return errorResponse(error);
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);

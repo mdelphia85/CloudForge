@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireRole, requireUser } from "@/server/auth";
 import { getPool, inTransaction } from "@/server/db";
@@ -5,7 +6,7 @@ import { errorResponse, HttpError, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, requireUuid } from "@/server/operations";
 type Context={params:Promise<{id:string}>};
 
-export async function GET(request:Request,{params}:Context) {
+async function handleGET(request:Request,{params}:Context) {
   try {
     const user=await requireUser(request);
     const {id}=await params;
@@ -54,7 +55,7 @@ export async function GET(request:Request,{params}:Context) {
   } catch(error) {return errorResponse(error);}
 }
 
-export async function PATCH(request:Request,{params}:Context) {
+async function handlePATCH(request:Request,{params}:Context) {
   try {
     requireSameOrigin(request);
     const user=await requireUser(request);
@@ -89,3 +90,6 @@ export async function PATCH(request:Request,{params}:Context) {
     return NextResponse.json(result);
   } catch(error) {return errorResponse(operationsError(error));}
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const PATCH = withOrganizationRoute(handlePATCH);
