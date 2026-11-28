@@ -140,6 +140,66 @@ jobs:
             http://127.0.0.1:3000/api/auth/bootstrap)
           test "$status" = "201"
           grep -q '"role":"admin"' /tmp/cloudforge-bootstrap.json
+      - name: Verify database backup and full restore, including engineering file bytes
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          trap 'rm -f /tmp/cloudforge-restore-ci.dump' EXIT
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge -v ON_ERROR_STOP=1
+          ' <<'SQL'
+          INSERT INTO inventory_items(sku,name,category,unit,reorder_point,created_by)
+            SELECT 'RESTORE-BOLT','Backed-up fastener','Mechanical','ea',20,id FROM users
+            WHERE email='ci-owner@example.test';
+          INSERT INTO projects(code,name,customer,created_by)
+            SELECT 'RESTORE-TEST','Recovery test project','CI Manufacturer',id FROM users
+            WHERE email='ci-owner@example.test';
+          INSERT INTO engineering_documents(project_id,title,kind,created_by)
+            SELECT p.id,'Recovered PLC program','plc',u.id
+              FROM projects p CROSS JOIN users u
+             WHERE p.code='RESTORE-TEST' AND u.email='ci-owner@example.test';
+          INSERT INTO engineering_revisions(document_id,revision,file_name,content_type,
+            byte_size,sha256,file_data,uploaded_by)
+            SELECT d.id,1,'backup-verify.bin','application/octet-stream',4,
+              repeat('a',64),decode('DEADBEEF','hex'),u.id
+              FROM engineering_documents d CROSS JOIN users u
+             WHERE d.title='Recovered PLC program' AND u.email='ci-owner@example.test';
+          SQL
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            pg_dump -U cloudforge_admin -d cloudforge -Fc --no-owner --no-acl
+          ' > /tmp/cloudforge-restore-ci.dump
+          test -s /tmp/cloudforge-restore-ci.dump
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            createdb -U cloudforge_admin cloudforge_restore_ci
+          '
+          docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            pg_restore -U cloudforge_admin -d cloudforge_restore_ci --no-owner --no-acl
+          ' < /tmp/cloudforge-restore-ci.dump
+          inventory=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT count(*) FROM inventory_items WHERE sku='''RESTORE-BOLT'''"
+          ')
+          test "$inventory" = "1"
+          program=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT encode(file_data,'''hex''') FROM engineering_revisions WHERE file_name='''backup-verify.bin'''"
+          ')
+          test "$program" = "deadbeef"
+          original=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge -Atc               "SELECT count(*) FROM schema_migrations"
+          ')
+          restored=$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_ci -Atc               "SELECT count(*) FROM schema_migrations"
+          ')
+          test "$original" = "$restored"
+          echo "Disposable PostgreSQL restore validated: inventory, binary engineering revision and schema versions."
       - name: Diagnostic logs on failure
         if: failure()
         env:
