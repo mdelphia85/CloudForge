@@ -16,6 +16,8 @@ const originalRequired=process.env.CLOUDFORGE_MFA_REQUIRED;
 let h:Handlers;
 let actors:Actors;
 let secret="";
+let enrolledCounter=0;
+let normalCookie:string|null=null;
 let codes:string[]=[];
 const login=(mfaCode?:string,password=STRONG_PASSWORD)=>call(h.login.POST,{
   method:"POST",path:pathLogin,body:{
@@ -75,7 +77,8 @@ it("enforces setup for commercial operations while letting existing users enroll
   expect(stored.rows[0].mfa_pending_secret_encrypted).not.toContain(secret);
   const incorrect=await confirm("000000"===totpAt(secret,Math.floor(Date.now()/30000))?"111111":"000000");
   expect(incorrect.status).toBe(401);
-  const good=await confirm(totpAt(secret,Math.floor(Date.now()/30000)));
+  enrolledCounter=Math.floor(Date.now()/30000);
+  const good=await confirm(totpAt(secret,enrolledCounter));
   expect(good.status).toBe(200);
   codes=good.body.recoveryCodes as string[];
   expect(codes).toHaveLength(10);
@@ -101,7 +104,10 @@ it("requires an MFA code before issuing a login cookie and rejects incorrect cod
   const wrong=await login("123456"===totpAt(secret,Math.floor(Date.now()/30000))?"654321":"123456");
   expect(wrong.status).toBe(401);
   expect(wrong.sessionCookie).toBeNull();
-  const withCode=await login(totpAt(secret,Math.floor(Date.now()/30000)));
+  const enrollmentReplay=await login(totpAt(secret,enrolledCounter));
+  expect(enrollmentReplay.status).toBe(401);
+  const withCode=await login(totpAt(secret,Math.floor(Date.now()/30000)+1));
+  normalCookie=withCode.sessionCookie;
   expect(withCode.status).toBe(200);
   expect(withCode.body.user.mfaEnabled).toBe(true);
   expect(withCode.sessionCookie).toBeTruthy();
@@ -112,7 +118,8 @@ it("requires an MFA code before issuing a login cookie and rejects incorrect cod
 });
 
 it("rejects reusing the same authenticator time-step code",async()=>{
-  const replay=await login(totpAt(secret,Math.floor(Date.now()/30000)));
+  const stored=await testPool().query<{mfa_last_counter:string}>("SELECT mfa_last_counter::text FROM users WHERE id=$1",[actors.admin.id]);
+  const replay=await login(totpAt(secret,Number(stored.rows[0].mfa_last_counter)));
   expect(replay.status).toBe(401);
   expect(replay.sessionCookie).toBeNull();
 });
@@ -135,11 +142,9 @@ it("consumes recovery codes exactly once without storing plaintext",async()=>{
 it("replaces a lost MFA device ONLY from a one-use-recovery-authenticated session",async()=>{
   expect(matchedTotpCounter(secret,totpAt(secret,100),100,100*30*1000)).toBeNull();
   expect(matchedTotpCounter(secret,totpAt(secret,100),-1,(100+6)*30*1000)).toBeNull();
-  const normal=await login(totpAt(secret,Math.floor(Date.now()/30000)+1));
-  expect(normal.status).toBe(200);
-  expect(normal.body.user.mfaRecoveryAuthenticated).toBe(false);
+  expect(normalCookie).toBeTruthy();
   const forbidden=await call(mfaSetup.POST,{
-    method:"POST",path:pathSetup,cookie:normal.sessionCookie,
+    method:"POST",path:pathSetup,cookie:normalCookie,
     body:{password:STRONG_PASSWORD},
   });
   expect(forbidden.status).toBe(409);
@@ -155,7 +160,7 @@ it("replaces a lost MFA device ONLY from a one-use-recovery-authenticated sessio
   expect(replacementSecret).toMatch(/^[A-Z2-7]{32}$/);
   expect(replacementSecret).not.toBe(secret);
   const unauthorizedCompletion=await call(mfaVerify.POST,{
-    method:"POST",path:pathVerify,cookie:normal.sessionCookie,
+    method:"POST",path:pathVerify,cookie:normalCookie,
     body:{code:totpAt(replacementSecret,Math.floor(Date.now()/30000))},
   });
   expect(unauthorizedCompletion.status).toBe(403);
