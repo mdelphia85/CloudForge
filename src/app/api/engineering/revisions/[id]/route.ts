@@ -4,6 +4,7 @@ import { requireRole, requireUser } from "@/server/auth";
 import { getPool, inTransaction } from "@/server/db";
 import { errorResponse, HttpError, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, requireUuid } from "@/server/operations";
+import { scanEngineeringFile,validateEngineeringFileIntegrity } from "@/server/engineering-file-security";
 type Context={params:Promise<{id:string}>};
 
 async function handleGET(request:Request,{params}:Context) {
@@ -37,6 +38,8 @@ async function handleGET(request:Request,{params}:Context) {
     } else if(user.role!=="admin" && row.uploaded_by!==user.id) {
       throw new HttpError(403,"NOT_APPROVED","Only approved engineering releases may be downloaded.");
     }
+    validateEngineeringFileIntegrity(row.file_data,row.sha256,row.byte_size);
+    await scanEngineeringFile(row.file_data);
     await inTransaction(async client=>{
       await audit(client,user,"engineering.revision_download","engineering_document",row.document_id,
         {revisionId,sha256:row.sha256,status:row.status});

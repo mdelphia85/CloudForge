@@ -5,6 +5,7 @@ import { requireRole, requireUser } from "@/server/auth";
 import { getPool, inTransaction } from "@/server/db";
 import { errorResponse, HttpError, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, requireUuid, shortText } from "@/server/operations";
+import { scanEngineeringFile,validateEngineeringFileName } from "@/server/engineering-file-security";
 
 type Context={params:Promise<{id:string}>};
 const MAX_UPLOAD_BYTES=50*1024*1024;
@@ -41,13 +42,12 @@ async function handlePOST(request:Request,{params}:Context) {
     const file=data.get("file");
     if(!(file instanceof File) || file.size===0 || file.size>MAX_UPLOAD_BYTES)
       throw new HttpError(400,"INVALID_FILE","Select a nonempty file of 50 MB or less.");
-    const original=file.name.split(/[\\/]/).pop()??"";
-    if(original.length<1||original.length>180||/[\x00-\x1F\x7F]/.test(original)||original==="."||original==="..")
-      throw new HttpError(400,"INVALID_NAME","File name is invalid.");
+    const original=validateEngineeringFileName(file.name);
     const rawNotes=data.get("notes");
     const notes=typeof rawNotes==="string" && rawNotes.trim() ? shortText(rawNotes,"notes",1000) : "";
     const bytes=Buffer.from(await file.arrayBuffer());
     if(bytes.length>MAX_UPLOAD_BYTES) throw new HttpError(413,"FILE_TOO_LARGE","File exceeds 50 MB.");
+    await scanEngineeringFile(bytes);
     const sha256=createHash("sha256").update(bytes).digest("hex");
     const result=await inTransaction(async client=>{
       // Lock document row: two simultaneous uploads cannot use the same revision number.

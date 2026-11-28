@@ -5,13 +5,13 @@ import { requireRole, requireUser } from "@/server/auth";
 import { inTransaction } from "@/server/db";
 import { errorResponse, HttpError, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, requireUuid, shortText } from "@/server/operations";
+import { scanEngineeringFile,validateEngineeringFileName } from "@/server/engineering-file-security";
 
 // An interim limit while opaque binaries are stored in PostgreSQL. For larger CAD/project
 // archives, move to durable private object storage with a streamed ingestion pipeline.
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const KINDS = ["plc", "hmi", "electrical_schematic", "mechanical_schematic"] as const;
 type Kind = typeof KINDS[number];
-const executableExtension = /\.(exe|dll|com|msi|bat|cmd|ps1|vbs|js|mjs|cjs|html?|svg|sh)$/i;
 
 function getOptionalId(value: FormDataEntryValue | null, label: string): string | null {
   if (value === null || value === "") return null;
@@ -67,19 +67,14 @@ async function handlePOST(request: Request) {
     if (file.size > MAX_UPLOAD_BYTES) {
       throw new HttpError(413, "FILE_TOO_LARGE", "File must be 50 MB or smaller.");
     }
-    const name = file.name.split(/[\\/]/).pop() ?? "";
-    if (name.length < 1 || name.length > 180 || /[\x00-\x1f\x7f]/.test(name) || name === "." || name === "..") {
-      throw new HttpError(400, "INVALID_NAME", "The engineering file name is invalid.");
-    }
-    if (executableExtension.test(name)) {
-      throw new HttpError(415, "UNSUPPORTED_FILE", "Executable and active-content files cannot be uploaded.");
-    }
+    const name=validateEngineeringFileName(file.name);
 
     // Opaque binary storage: no transformation, execution, preview, or archive extraction.
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.length !== file.size || bytes.length > MAX_UPLOAD_BYTES) {
       throw new HttpError(413, "FILE_TOO_LARGE", "File upload exceeds the 50 MB limit.");
     }
+    await scanEngineeringFile(bytes);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
 
     const created = await inTransaction(async (client) => {
