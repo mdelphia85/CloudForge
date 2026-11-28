@@ -107,6 +107,7 @@ jobs:
           openssl rand -hex 32 > secrets/postgres-admin-password.txt
           openssl rand -hex 32 > secrets/postgres-app-password.txt
           openssl rand -hex 32 > secrets/bootstrap-admin-token.txt
+          openssl rand -hex 32 > secrets/mfa-encryption-key.txt
           openssl genpkey -algorithm Ed25519 -out /tmp/cloudforge-ci-private.pem
           openssl pkey -in /tmp/cloudforge-ci-private.pem -pubout -out secrets/license-public-key.pem
           rm -f /tmp/cloudforge-ci-private.pem
@@ -200,6 +201,38 @@ jobs:
           ')
           test "$original" = "$restored"
           echo "Disposable PostgreSQL restore validated: inventory, binary engineering revision and schema versions."
+      - name: Verify age-encrypted customer backup and isolated recovery
+        env:
+          APP_ORIGIN: http://localhost:3000
+        run: |
+          set -euo pipefail
+          if ! command -v age >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y age
+          fi
+          umask 077
+          age-keygen -o /tmp/cloudforge-ci-recovery.key
+          recipient="$(age-keygen -y /tmp/cloudforge-ci-recovery.key)"
+          mkdir -p /tmp/cloudforge-ci-encrypted
+          CLOUDFORGE_BACKUP_DIR=/tmp/cloudforge-ci-encrypted \
+          CLOUDFORGE_BACKUP_RECIPIENT="$recipient" \
+            bash deploy/onprem/backup-encrypted.sh
+          archive="$(find /tmp/cloudforge-ci-encrypted -maxdepth 1 -type f -name '*.pgdump.age' -print -quit)"
+          test -s "$archive"
+          if grep -a -q 'RESTORE-BOLT' "$archive"; then
+            echo 'Backup unexpectedly contained plaintext records' >&2
+            exit 1
+          fi
+          bash deploy/onprem/restore-encrypted.sh \
+            "$archive" cloudforge_restore_secure_ci /tmp/cloudforge-ci-recovery.key
+          actual="$(docker compose exec -T postgres sh -ec '
+            export PGPASSWORD="$(cat /run/secrets/postgres_admin_password)"
+            psql -U cloudforge_admin -d cloudforge_restore_secure_ci -Atc \
+              "SELECT encode(file_data,chr(104)||chr(101)||chr(120)) FROM engineering_revisions LIMIT 1"
+          ')"
+          test "$actual" = "deadbeef"
+          rm -rf -- /tmp/cloudforge-ci-encrypted /tmp/cloudforge-ci-recovery.key
+          echo "Encrypted backup and clean-room restore accepted."
       - name: Diagnostic logs on failure
         if: failure()
         env:
