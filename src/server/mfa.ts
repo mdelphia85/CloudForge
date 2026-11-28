@@ -108,6 +108,7 @@ function backupCodes():string[] {
 
 export async function startMfaEnrollment(
   userId:string,organizationId:string,password:string,
+  recoveryAuthenticated=false,
 ):Promise<{secret:string;otpauthUrl:string;expiresInSeconds:number}> {
   const key=secretKey();
   if(key.length!==32)throw new HttpError(503,"MFA_CONFIGURATION","Encryption key invalid.");
@@ -116,8 +117,9 @@ export async function startMfaEnrollment(
       email:string;password_hash:string;mfa_enabled:boolean;
     }>("SELECT email,password_hash,mfa_enabled FROM users WHERE id=$1 AND is_active FOR UPDATE",[userId]);
     if(!result.rows[0])throw new HttpError(401,"UNAUTHENTICATED","Sign in to continue.");
-    if(result.rows[0].mfa_enabled)throw new HttpError(409,"MFA_ALREADY_ENABLED",
-      "Multi-factor authentication is already enabled.");
+    if(result.rows[0].mfa_enabled && !recoveryAuthenticated)
+      throw new HttpError(409,"MFA_ALREADY_ENABLED",
+        "Sign in using an unused recovery code to replace a lost authenticator.");
     if(!await verifyPassword(password,result.rows[0].password_hash)) {
       throw new HttpError(401,"INVALID_CREDENTIALS","Password is incorrect.");
     }
@@ -129,8 +131,9 @@ export async function startMfaEnrollment(
     );
     await client.query(
       `INSERT INTO audit_events(actor_user_id,organization_id,action,entity_type,entity_id)
-       VALUES($1,$2,'auth.mfa_setup_started','user',$1)`,
-      [userId,organizationId],
+       VALUES($1,$2,$3,'user',$1)`,
+      [userId,organizationId,result.rows[0].mfa_enabled
+        ? "auth.mfa_replacement_started":"auth.mfa_setup_started"],
     );
     return {secret,email:result.rows[0].email};
   });
@@ -150,7 +153,7 @@ export async function completeMfaEnrollment(
     }>(`SELECT mfa_enabled,mfa_pending_secret_encrypted,mfa_pending_expires_at
        FROM users WHERE id=$1 AND is_active FOR UPDATE`,[userId]);
     const row=result.rows[0];
-    if(!row||row.mfa_enabled||!row.mfa_pending_secret_encrypted||
+    if(!row||!row.mfa_pending_secret_encrypted||
        !row.mfa_pending_expires_at||
        row.mfa_pending_expires_at.getTime()<=Date.now()) {
       throw new HttpError(400,"MFA_SETUP_EXPIRED","Start authenticator setup again.");
@@ -159,6 +162,9 @@ export async function completeMfaEnrollment(
     const matched=matchedTotpCounter(secret,code);
     if(matched===null)throw new HttpError(401,"INVALID_MFA_CODE","Authenticator code is incorrect.");
     const codes=backupCodes();
+    // Replacement invalidates every old emergency code; none survive
+    // an authenticator change.
+    await client.query("DELETE FROM user_mfa_recovery_codes WHERE user_id=$1",[userId]);
     await client.query(
       `UPDATE users SET mfa_secret_encrypted=mfa_pending_secret_encrypted,
         mfa_enabled=true,mfa_pending_secret_encrypted=NULL,
@@ -175,14 +181,14 @@ export async function completeMfaEnrollment(
     await client.query("DELETE FROM sessions WHERE user_id=$1",[userId]);
     await client.query(
       `INSERT INTO audit_events(actor_user_id,organization_id,action,entity_type,entity_id)
-        VALUES($1,$2,'auth.mfa_enabled','user',$1)`,
-      [userId,organizationId],
+        VALUES($1,$2,$3,'user',$1)`,
+      [userId,organizationId,row.mfa_enabled ? "auth.mfa_replaced" : "auth.mfa_enabled"],
     );
     return {recoveryCodes:codes};
   });
 }
 
-export async function verifyLoginMfa(userId:string,code:unknown):Promise<boolean> {
+export async function verifyLoginMfa(userId:string,code:unknown):Promise<"totp"|"recovery"|false> {
   const supplied=typeof code==="string"?code.trim():"";
   if(!supplied || supplied.length>128)return false;
   return inTransaction(async client=>{
@@ -198,7 +204,7 @@ export async function verifyLoginMfa(userId:string,code:unknown):Promise<boolean
       );
       if(matched===null)return false;
       await client.query("UPDATE users SET mfa_last_counter=$2 WHERE id=$1",[userId,matched]);
-      return true;
+      return "totp";
     }
     if(!/^[A-Za-z0-9_-]{24}$/.test(supplied))return false;
     const recovered=await client.query(
@@ -212,6 +218,6 @@ export async function verifyLoginMfa(userId:string,code:unknown):Promise<boolean
         VALUES($1,'auth.mfa_recovery_used','user',$1,$2::jsonb)`,
       [userId,JSON.stringify({remainingRecoveryCodes:"Check account security settings"})],
     );
-    return true;
+    return "recovery";
   });
 }
