@@ -157,6 +157,7 @@ export async function switchSessionOrganization(request: Request, organizationId
       `SELECT s.user_id, s.organization_id FROM sessions s
          JOIN users u ON u.id=s.user_id
         WHERE s.token_hash=$1 AND s.expires_at>now() AND u.is_active
+          AND (NOT u.mfa_enabled OR s.mfa_verified)
         FOR UPDATE OF s`,
       [tokenHash],
     );
