@@ -2,8 +2,10 @@
 
 **Commercial release status: NOT READY.** This is a portable deployment foundation,
 not approval to license customer data or run unattended industrial sites.
-Multi-organization isolation, enforced subscription/seat/entitlement rules, MFA,
-documented backup/restore testing, and production acceptance remain outstanding.
+The development branches include tenant isolation, license enforcement, MFA,
+file scanning, and disposable backup/restore tests. Real customer recovery,
+offline scanner-signature handling, independent security review, and controlled
+production activation are still outstanding.
 
 ## Architecture
 
@@ -34,7 +36,13 @@ cross-organization isolation. Do not remove it to serve multiple customers.
    `secrets/bootstrap-admin-token.txt`. Remove the bootstrap secret mount and
    `BOOTSTRAP_ADMIN_TOKEN_FILE` variable from the local Compose configuration
    after the account exists, then securely delete the token file.
-6. Set `APP_ORIGIN` to the exact URL that end users visit, including
+6. Generate a new customer-specific **32-byte random MFA AES key** and store
+   its 64-character hex representation in `secrets/mfa-encryption-key.txt`.
+   Example: `openssl rand -hex 32 > secrets/mfa-encryption-key.txt`.
+   Restrict file permissions to the installation administrator (`chmod 600`).
+   Keep an **encrypted, offline recovery copy** of this key with the PostgreSQL
+   recovery materials. If lost, encrypted MFA secrets cannot be decrypted.
+7. Set `APP_ORIGIN` to the exact URL that end users visit, including
    `http://localhost:3000` only for isolated testing, or an internally managed
    HTTPS hostname for production. Reverse proxy TLS is the deployment owner's
    responsibility. By default the service listens on host loopback only;
@@ -70,6 +78,74 @@ until every API path, file repository, license policy, and industrial gateway
 isolation test is green and the database role has been confirmed
 `NOSUPERUSER NOBYPASSRLS`. The app readiness check is an additional
 fail-closed protection and does not replace a complete security review.
+
+## Commercial malware scanning (customer-controlled)
+
+For commercial SaaS or on-premises deployments, PLC programs, HMI projects,
+electrical schematics and mechanical schematics must pass a **private ClamAV**
+scanner before CloudForge will store or serve them. The production scanner
+must have verified, current malware signatures. CloudForge will return a
+non-ready status and refuse file access if the scanner is unavailable.
+
+The Compose file includes an optional internal ClamAV service. On staging,
+start it with `--profile commercial`, setting
+`CLOUDFORGE_CLAMAV_HOST=clamav` and `CLOUDFORGE_CLAMAV_PORT=3310`.
+Only the application container may access this port: it is never mapped
+outside the Docker network. For air-gapped installations, import the
+scanner image, signature databases, and tested offline update procedure
+using the site's approved removable-media process. The `clamav/clamav:stable`
+tag is for integration convenience only; **pin a reviewed immutable image
+digest for a customer release** and verify the scanner detection test
+before activating any customer.
+
+See `docs/engineering-file-security.md`. A passing protocol-compatible
+mock in CI does not count as a real ClamAV scan.
+
+## Encrypted customer backups and isolated restoration
+
+CloudForge provides two host-side scripts using the standardized open-source
+`age` encryption format. The archive is encrypted *as PostgreSQL streams it*;
+the host never writes the plaintext database dump to disk.
+
+Generate and protect the private `age` X25519 identity **on a separate trusted
+recovery system**. Give the CloudForge backup host only the *public recipient*
+string beginning `age1`. Store the private identity offline under a documented
+two-person emergency recovery policy.
+
+On the Docker host with the `age` command installed:
+
+```sh
+export CLOUDFORGE_BACKUP_RECIPIENT='age1...public-recipient-from-recovery-system'
+export CLOUDFORGE_BACKUP_DIR='/backups/cloudforge'
+bash deploy/onprem/backup-encrypted.sh
+```
+
+Move encrypted backups to protected, access-controlled off-host storage and
+enforce retention and integrity verification. Keep public license keys, signed
+licenses, database configuration, scanner signatures, and the customer's
+encrypted MFA secret key with the disaster-recovery inventory.
+
+For a dedicated recovery drill on the recovery host where the private age
+identity is authorized:
+
+```sh
+bash deploy/onprem/restore-encrypted.sh \
+  /backups/cloudforge/example.pgdump.age \
+  cloudforge_restore_drill1 \
+  /secure/offline/age-recovery-identity.txt
+```
+
+Restore always creates a **new** `cloudforge_restore_*` database, never
+overwrites the active CloudForge database. Verify recovered inventory,
+organization IDs, audit events, engineering SHA-256 values, approved revision
+downloads, signed licenses, MFA logins, and end-to-end user workflows.
+Only an authorized, documented customer disaster-recovery process may
+promote the recovered database.
+
+`age` decryption requires the matching private identity. Losing that identity
+makes encrypted backups unrecoverable, so regularly validate key custody and
+run a separate real-site restoration drill. GitHub CI also performs a disposable
+encrypted backup and restore, but it is not a substitute for such a drill.
 
 ## Air-gapped installation
 
