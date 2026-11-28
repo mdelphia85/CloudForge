@@ -1,3 +1,4 @@
+import { withOrganizationRoute } from "@/server/tenant-context";
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
 import { errorResponse, readJson, requireSameOrigin } from "@/server/errors";
@@ -7,7 +8,7 @@ import { createAlarmRule, listAlarms } from "@/server/phase5/alarms";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, { params }: Context) {
+async function handleGET(request: Request, { params }: Context) {
   try {
     const user = await requireUser(request);
     return NextResponse.json(await listAlarms(requireUuid((await params).id, "equipmentId"), user), {
@@ -18,7 +19,7 @@ export async function GET(request: Request, { params }: Context) {
   }
 }
 
-export async function POST(request: Request, { params }: Context) {
+async function handlePOST(request: Request, { params }: Context) {
   try {
     requireSameOrigin(request);
     const user = await requireUser(request);
@@ -28,3 +29,6 @@ export async function POST(request: Request, { params }: Context) {
     return errorResponse(operationsError(error));
   }
 }
+
+export const GET = withOrganizationRoute(handleGET);
+export const POST = withOrganizationRoute(handlePOST);
