@@ -11,8 +11,11 @@ async function handleGET(request: Request) {
     requireRole(actor, "admin");
     const users = await inTransaction(async (client) => {
       const result = await client.query(
-        `SELECT id, email, display_name AS "displayName", role, is_active AS "isActive"
-         FROM users ORDER BY display_name, id`,
+        `SELECT u.id, u.email, u.display_name AS "displayName",
+                m.role, u.is_active AS "isActive"
+         FROM users u JOIN organization_memberships m ON m.user_id=u.id
+         WHERE m.organization_id=$1 ORDER BY u.display_name,u.id`,
+        [actor.organizationId],
       );
       return result.rows;
     });
@@ -27,6 +30,12 @@ async function handlePOST(request: Request) {
     requireSameOrigin(request);
     const actor = await requireUser(request);
     requireRole(actor, "admin");
+    // Until invitations and per-organization account provisioning are complete,
+    // never create globally scoped user accounts from a shared SaaS organization.
+    if (process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED === "true") {
+      throw new HttpError(409, "INVITATIONS_REQUIRED",
+        "Organization-scoped invitations are required before adding users to shared SaaS.");
+    }
     const body = await readJson(request);
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
