@@ -171,6 +171,12 @@ it("keeps both organizations and memberships separate under the REAL restricted 
   expect(first.body.organizations.map((x:{id:string})=>x.id)).toEqual([aOrg]);
   expect(second.body.organizations.map((x:{id:string})=>x.id)).toEqual([bOrg]);
   expect(second.body.selectedOrganizationId).toBe(bOrg);
+  const loginAudit=await testPool().query<{organization_id:string}>(
+    "SELECT organization_id FROM audit_events WHERE actor_user_id=$1 AND action='auth.login' " +
+      "ORDER BY occurred_at DESC LIMIT 1",
+    [bUserId],
+  );
+  expect(loginAudit.rows[0]?.organization_id).toBe(bOrg);
 });
 
 it("permits identical customer SKUs, but filters stock and projects by signed-in organization",async()=>{
