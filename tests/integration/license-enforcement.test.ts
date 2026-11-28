@@ -20,7 +20,7 @@ type Fixture = {
 async function installLicense({
   modules = ["inventory", "engineering"], seatLimit = 3,
   issuedAt = "2026-11-01T00:00:00.000Z",
-  activatedAt = "2026-11-01T00:00:00.000Z",
+  activatedAt = issuedAt,
   expiresAt = "2027-11-01T00:00:00.000Z",
   signature,
 }: Fixture = {}) {
