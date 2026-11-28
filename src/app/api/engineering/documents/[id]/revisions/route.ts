@@ -6,7 +6,7 @@ import { errorResponse, HttpError, requireSameOrigin } from "@/server/errors";
 import { audit, operationsError, requireUuid, shortText } from "@/server/operations";
 
 type Context={params:Promise<{id:string}>};
-const MAX_UPLOAD_BYTES=15*1024*1024;
+const MAX_UPLOAD_BYTES=50*1024*1024;
 
 export async function GET(request:Request,{params}:Context) {
   try {
@@ -32,21 +32,21 @@ export async function POST(request:Request,{params}:Context) {
     const documentId=requireUuid(id);
     const contentLength=Number(request.headers.get("content-length"));
     if(Number.isFinite(contentLength) && contentLength>MAX_UPLOAD_BYTES+16384)
-      throw new HttpError(413,"FILE_TOO_LARGE","Files must be 15 MB or less.");
+      throw new HttpError(413,"FILE_TOO_LARGE","Files must be 50 MB or less.");
     const contentType=request.headers.get("content-type") ?? "";
     if(!contentType.startsWith("multipart/form-data"))
       throw new HttpError(415,"INVALID_UPLOAD","Use multipart/form-data.");
     const data=await request.formData();
     const file=data.get("file");
     if(!(file instanceof File) || file.size===0 || file.size>MAX_UPLOAD_BYTES)
-      throw new HttpError(400,"INVALID_FILE","Select a nonempty file of 15 MB or less.");
+      throw new HttpError(400,"INVALID_FILE","Select a nonempty file of 50 MB or less.");
     const original=file.name.split(/[\\/]/).pop()??"";
     if(original.length<1||original.length>180||/[\x00-\x1F\x7F]/.test(original)||original==="."||original==="..")
       throw new HttpError(400,"INVALID_NAME","File name is invalid.");
     const rawNotes=data.get("notes");
     const notes=typeof rawNotes==="string" && rawNotes.trim() ? shortText(rawNotes,"notes",1000) : "";
     const bytes=Buffer.from(await file.arrayBuffer());
-    if(bytes.length>MAX_UPLOAD_BYTES) throw new HttpError(413,"FILE_TOO_LARGE","File exceeds 15 MB.");
+    if(bytes.length>MAX_UPLOAD_BYTES) throw new HttpError(413,"FILE_TOO_LARGE","File exceeds 50 MB.");
     const sha256=createHash("sha256").update(bytes).digest("hex");
     const result=await inTransaction(async client=>{
       // Lock document row: two simultaneous uploads cannot use the same revision number.
