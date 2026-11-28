@@ -132,16 +132,47 @@ it("consumes recovery codes exactly once without storing plaintext",async()=>{
   expect(remaining.rows[0].count).toBe(8);
 });
 
-it("rejects replayed or expired authenticator counters and setup after MFA is enabled",async()=>{
+it("replaces a lost MFA device ONLY from a one-use-recovery-authenticated session",async()=>{
   expect(matchedTotpCounter(secret,totpAt(secret,100),100,100*30*1000)).toBeNull();
   expect(matchedTotpCounter(secret,totpAt(secret,100),-1,(100+6)*30*1000)).toBeNull();
-  const again=await login(codes[2]);
-  expect(again.status).toBe(200);
-  const unauthorizedEnrollment=await call(mfaSetup.POST,{
-    method:"POST",path:pathSetup,cookie:again.sessionCookie,
+  const normal=await login(totpAt(secret,Math.floor(Date.now()/30000)+1));
+  expect(normal.status).toBe(200);
+  expect(normal.body.user.mfaRecoveryAuthenticated).toBe(false);
+  const forbidden=await call(mfaSetup.POST,{
+    method:"POST",path:pathSetup,cookie:normal.sessionCookie,
     body:{password:STRONG_PASSWORD},
   });
-  expect(unauthorizedEnrollment.status).toBe(409);
+  expect(forbidden.status).toBe(409);
+  const recovered=await login(codes[2]);
+  expect(recovered.status).toBe(200);
+  expect(recovered.body.user.mfaRecoveryAuthenticated).toBe(true);
+  const replacement=await call(mfaSetup.POST,{
+    method:"POST",path:pathSetup,cookie:recovered.sessionCookie,
+    body:{password:STRONG_PASSWORD},
+  });
+  expect(replacement.status).toBe(200);
+  const replacementSecret=String(replacement.body.secret);
+  expect(replacementSecret).toMatch(/^[A-Z2-7]{32}$/);
+  expect(replacementSecret).not.toBe(secret);
+  const completed=await call(mfaVerify.POST,{
+    method:"POST",path:pathVerify,cookie:recovered.sessionCookie,
+    body:{code:totpAt(replacementSecret,Math.floor(Date.now()/30000))},
+  });
+  expect(completed.status).toBe(200);
+  const newCodes=completed.body.recoveryCodes as string[];
+  expect(newCodes).toHaveLength(10);
+  expect(new Set(newCodes).size).toBe(10);
+  const oldSession=await call(inventory.GET,{
+    path:"/api/inventory",cookie:recovered.sessionCookie,
+  });
+  expect(oldSession.status).toBe(401);
+  const oldCode=await login(codes[3]);
+  expect(oldCode.status).toBe(401);
+  const newRecovery=await login(newCodes[0]);
+  expect(newRecovery.status).toBe(200);
+  expect(newRecovery.body.user.mfaRecoveryAuthenticated).toBe(true);
+  const passwordOnly=await login();
+  expect(passwordOnly.status).toBe(401);
 });
 
 it("MFA encryption must be configured; missing key fails closed",async()=>{
