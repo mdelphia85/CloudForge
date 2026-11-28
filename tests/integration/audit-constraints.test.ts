@@ -177,6 +177,7 @@ describe("migrations", () => {
       "014_session_organization_binding.sql",
       "015_cross_organization_references.sql",
       "016_tenant_row_security.sql",
+      "017_organization_business_keys.sql",
     ]);
     const again = runMigrations();
     expect(again.status).toBe(0);
