@@ -24,7 +24,7 @@ export async function GET(request:Request,{params}:Context) {
       if(user.role==="viewer") {
         const assigned=await getPool().query(
           "SELECT 1 FROM field_service_jobs s WHERE s.assigned_to=$1 AND s.status<>'completed' "+
-          "AND $2 IN ('plc','hmi') AND (s.asset_id=$3 OR ($3 IS NULL AND s.project_id=$4)) LIMIT 1",
+          "AND $2 IN ('plc','hmi','electrical_schematic','mechanical_schematic') AND (s.asset_id=$3 OR ($3 IS NULL AND s.project_id=$4)) LIMIT 1",
           [user.id,row.kind,row.asset_id,row.project_id],
         );
         if(!assigned.rowCount) throw new HttpError(403,"FORBIDDEN","Approved programs are available only to technicians assigned to matching open service work.");
