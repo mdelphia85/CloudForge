@@ -63,7 +63,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm ci --prefix gateway
+      - name: Start real ClamAV scanner
+        run: |
+          set -euo pipefail
+          docker run -d --name cloudforge-ci-clamav -p 127.0.0.1:3310:3310 clamav/clamav:stable
+          for attempt in $(seq 1 90); do
+            if docker exec cloudforge-ci-clamav clamdscan --ping 1 >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs cloudforge-ci-clamav
+          exit 1
       - run: npm run test:integration
+        env:
+          CLOUDFORGE_CI_REAL_SCANNER: "true"
+      - name: Remove test scanner
+        if: always()
+        run: docker rm -f cloudforge-ci-clamav || true
 
   build:
     name: Production build
