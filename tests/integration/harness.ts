@@ -57,6 +57,7 @@ type Handler = (request: Request) => Promise<Response>;
 export type CallOptions = {
   method?: string;
   path?: string;
+  url?: string;
   body?: unknown;
   rawBody?: string;
   cookie?: string | null;
@@ -85,7 +86,7 @@ export async function call(handler: Handler, options: CallOptions = {}): Promise
   else if (options.body !== undefined) body = JSON.stringify(options.body);
   if (body !== undefined) headers.set("content-type", "application/json");
 
-  const response = await handler(new Request(`${ORIGIN}${options.path ?? "/api/test"}`, { method, headers, body }));
+  const response = await handler(new Request(options.url ?? `${ORIGIN}${options.path ?? "/api/test"}`, { method, headers, body }));
   const setCookie = response.headers.get("set-cookie");
   const match = setCookie?.match(/cloudforge_session=([^;]*)/);
   const text = await response.text();
