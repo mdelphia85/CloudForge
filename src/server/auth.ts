@@ -47,7 +47,7 @@ export function sessionCookieOptions() {
 }
 
 export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number): Promise<{organizationId:string;role:UserRole}> {
-  await inTransaction(async (client) => {
+  return inTransaction(async (client) => {
     const user = await client.query<{ is_active: boolean; session_epoch: number }>(
       "SELECT is_active, session_epoch FROM users WHERE id = $1 FOR UPDATE",
       [userId],
