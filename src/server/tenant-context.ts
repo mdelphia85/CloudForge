@@ -79,7 +79,8 @@ export function withOrganizationRoute<Args extends unknown[]>(
   return async (request: Request, ...args: Args): Promise<Response> => {
     try {
       const user = await requireUser(request);
-      if (process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED === "true") {
+      if (process.env.CLOUDFORGE_MULTI_ORGANIZATION_ENABLED === "true" ||
+          process.env.CLOUDFORGE_LICENSE_ENFORCEMENT_REQUIRED === "true") {
         await enforceRouteLicense(user.organizationId, request.url);
       }
       return await context.run(
