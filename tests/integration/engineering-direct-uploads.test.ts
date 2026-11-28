@@ -7,6 +7,7 @@ import * as resources from "@/app/api/operations/[resource]/route";
 import * as upload from "@/app/api/engineering/uploads/route";
 import * as revisions from "@/app/api/engineering/documents/[id]/revisions/route";
 import * as revision from "@/app/api/engineering/revisions/[id]/route";
+import * as fieldSchematics from "@/app/api/engineering/field-schematics/route";
 
 let h: Handlers;
 let actors: Actors;
@@ -159,4 +160,41 @@ it("keeps technician release access tied to assigned open service work", async (
     params: Promise.resolve({ id: data.revisionId }),
   });
   expect(unapproved.status).toBe(403);
+});
+
+it("lists only assigned approved electrical and mechanical drawings for field service", async () => {
+  const published = await fieldSchematics.GET(new Request(ORIGIN, {
+    headers: { cookie: actors.viewer.cookie },
+  }));
+  expect(published.status).toBe(200);
+  const list = await published.json();
+  expect(list.files).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "electrical_schematic", asset_id: assetId }),
+    expect.objectContaining({ kind: "mechanical_schematic", asset_id: assetId }),
+  ]));
+
+  const otherProject = await resource("projects", {
+    code: "UNASSIGNED-SITE", name: "Unassigned Site", customer: "Another customer",
+  }, actors.admin.cookie);
+  expect(otherProject.status).toBe(201);
+  const unrelated = await directUpload("mechanical_schematic", actors.admin.cookie, {
+    projectId: String(otherProject.body.id), assetId: null,
+  });
+  expect(unrelated.status).toBe(201);
+  const document = await unrelated.json();
+  expect((await revision.PATCH(new Request(ORIGIN, {
+    method: "PATCH", headers: { origin: ORIGIN, cookie: actors.admin.cookie },
+  }), { params: Promise.resolve({ id: document.revisionId }) })).status).toBe(200);
+
+  const filtered = await fieldSchematics.GET(new Request(ORIGIN, {
+    headers: { cookie: actors.viewer.cookie },
+  }));
+  expect(filtered.status).toBe(200);
+  const fileList = (await filtered.json()).files;
+  expect(fileList.some((row: { id: string }) => row.id === document.revisionId)).toBe(false);
+
+  const unauthorizedDownload = await revision.GET(new Request(ORIGIN, {
+    headers: { cookie: actors.viewer.cookie },
+  }), { params: Promise.resolve({ id: document.revisionId }) });
+  expect(unauthorizedDownload.status).toBe(403);
 });
