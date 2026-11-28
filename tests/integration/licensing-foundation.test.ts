@@ -51,6 +51,9 @@ it("restricts offline license installation to explicitly provisioned platform ow
     expect((await install(claims)).status).toBe(201);
     expect((await install(claims)).status).toBe(200);
     expect((await install({ ...claims, licenseId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" })).status).toBe(409);
+    const reused = await install({ ...claims, issuedAt: "2026-01-03T00:00:00.000Z", activatedAt: "2026-01-03T00:00:00.000Z" });
+    expect(reused.status).toBe(409);
+    expect(reused.body.code).toBe("LICENSE_ID_REUSED");
     const read = await call(licenses.GET, { cookie: admin.sessionCookie, path: `/api/platform/licenses?organizationId=${organizationId}` });
     expect(read.status).toBe(200);
     expect(read.body.license).toMatchObject({ claims, timeStatus: "active" });

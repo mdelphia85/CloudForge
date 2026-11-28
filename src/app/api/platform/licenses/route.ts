@@ -64,6 +64,8 @@ export async function POST(request: Request) {
       if (prior && new Date(claims.issuedAt).getTime() <= prior.issued_at.getTime()) {
         throw new HttpError(409, "LICENSE_NOT_NEWER", "The license must be newer than the installed license.");
       }
+      const reused = await client.query("SELECT 1 FROM organization_licenses WHERE license_id = $1", [claims.licenseId]);
+      if (reused.rowCount) throw new HttpError(409, "LICENSE_ID_REUSED", "The license ID has already been used.");
       await client.query(
         `INSERT INTO organization_licenses
            (license_id, organization_id, signed_payload, signature, issued_at, activated_at, expires_at, installed_by)
