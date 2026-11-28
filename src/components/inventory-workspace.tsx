@@ -315,7 +315,7 @@ export default function InventoryWorkspace() {
               <label>Password<input required name="password" type="password" maxLength={256} autoComplete={bootstrap ? "new-password" : "current-password"} /></label>
               {!bootstrap && <label>Authenticator or recovery code (when MFA is enabled)
                 <input name="mfaCode" type="text" autoComplete="one-time-code" maxLength={128}
-                  placeholder="6-digit code or recovery code" /></label>
+                  placeholder="6-digit code or recovery code" /></label>}
               {bootstrap && <small className="password-hint">At least 14 characters, including uppercase, lowercase, a number, and a symbol.</small>}
               <button className="primary-button auth-submit" disabled={saving}>{saving ? "Please wait…" : bootstrap ? "Create administrator" : "Sign in"}</button>
             </form>
