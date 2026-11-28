@@ -84,10 +84,11 @@ function parseAsset(body: Record<string, unknown>, partial = false): Partial<Ass
 async function validateAssetRelations(
   client: PoolClient,
   asset: Pick<AssetInput, "projectId" | "parentAssetId" | "customerSite">,
+  organizationId: string,
   currentAssetId?: string,
 ) {
   if (asset.projectId) {
-    const project = await client.query("SELECT id FROM projects WHERE id=$1", [asset.projectId]);
+    const project = await client.query("SELECT id FROM projects WHERE id=$1 AND organization_id=$2", [asset.projectId,organizationId]);
     if (!project.rowCount) throw new HttpError(404, "PROJECT_NOT_FOUND", "The selected project does not exist.");
   }
   if (!asset.parentAssetId) return;
@@ -95,8 +96,8 @@ async function validateAssetRelations(
     throw new HttpError(400, "INVALID_PARENT", "Equipment cannot be its own parent.");
   }
   const parent = await client.query<{ customer_site: string }>(
-    "SELECT customer_site FROM engineering_assets WHERE id=$1",
-    [asset.parentAssetId],
+    "SELECT customer_site FROM engineering_assets WHERE id=$1 AND organization_id=$2",
+    [asset.parentAssetId,organizationId],
   );
   if (!parent.rowCount) throw new HttpError(404, "PARENT_NOT_FOUND", "The selected parent equipment does not exist.");
   if (parent.rows[0].customer_site !== asset.customerSite) {
@@ -105,10 +106,10 @@ async function validateAssetRelations(
   if (currentAssetId) {
     const cycle = await client.query(
       "WITH RECURSIVE descendants(id) AS (" +
-        "SELECT id FROM engineering_assets WHERE parent_asset_id=$1 " +
-        "UNION ALL SELECT a.id FROM engineering_assets a JOIN descendants d ON a.parent_asset_id=d.id" +
+        "SELECT id FROM engineering_assets WHERE parent_asset_id=$1 AND organization_id=$3 " +
+        "UNION ALL SELECT a.id FROM engineering_assets a JOIN descendants d ON a.parent_asset_id=d.id WHERE a.organization_id=$3" +
         ") SELECT 1 FROM descendants WHERE id=$2 LIMIT 1",
-      [currentAssetId, asset.parentAssetId],
+      [currentAssetId, asset.parentAssetId,organizationId],
     );
     if (cycle.rowCount) throw new HttpError(409, "EQUIPMENT_HIERARCHY_CYCLE", "Equipment hierarchy cannot contain a cycle.");
   }
@@ -134,12 +135,12 @@ export async function listEquipment(user: AuthenticatedUser) {
       "LEFT JOIN LATERAL (SELECT s.value,s.quality,s.observed_at FROM asset_telemetry_samples s " +
         "JOIN asset_telemetry_tags t ON t.id=s.tag_id WHERE t.asset_id=a.id AND s.source_id=src.id AND t.semantic_type='state' " +
         "ORDER BY s.received_at DESC,s.observed_at DESC LIMIT 1) state ON true " +
-      "WHERE $1 <> 'viewer' OR EXISTS(SELECT 1 FROM projects pr WHERE pr.id=a.project_id AND pr.created_by=$2) " +
+      "WHERE a.organization_id=$3 AND ($1 <> 'viewer' OR EXISTS(SELECT 1 FROM projects pr WHERE pr.id=a.project_id AND pr.created_by=$2) " +
       "OR EXISTS(SELECT 1 FROM project_resources r WHERE r.project_id=a.project_id AND r.user_id=$2) " +
       "OR EXISTS(SELECT 1 FROM field_service_jobs fs WHERE fs.asset_id=a.id AND fs.assigned_to=$2) " +
-      "OR EXISTS(SELECT 1 FROM maintenance_work_orders mw WHERE mw.asset_id=a.id AND mw.assigned_to=$2) " +
+      "OR EXISTS(SELECT 1 FROM maintenance_work_orders mw WHERE mw.asset_id=a.id AND mw.assigned_to=$2)) " +
       "ORDER BY a.asset_tag LIMIT 500",
-    [user.role, user.id],
+    [user.role, user.id,user.organizationId],
   );
   return { equipment: result.rows };
 }
@@ -148,14 +149,14 @@ export async function createEquipment(body: Record<string, unknown>, user: Authe
   requireOperationsRole(user);
   const input = parseAsset(body) as AssetInput;
   return inTransaction(async (client) => {
-    await validateAssetRelations(client, input);
+    await validateAssetRelations(client, input,user.organizationId);
     const created = await client.query<{ id: string }>(
       "INSERT INTO engineering_assets(project_id,asset_tag,name,customer_site,area,plc_make,plc_model,hmi_make,hmi_model,notes," +
-        "manufacturer,model,serial_number,location,installed_on,status,parent_asset_id,created_by,updated_by) " +
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18) RETURNING id",
+        "manufacturer,model,serial_number,location,installed_on,status,parent_asset_id,created_by,updated_by,organization_id) " +
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$19) RETURNING id",
       [input.projectId,input.assetTag,input.name,input.customerSite,input.area,input.plcMake,input.plcModel,
         input.hmiMake,input.hmiModel,input.notes,input.manufacturer,input.model,input.serialNumber,input.location,
-        input.installedOn,input.status,input.parentAssetId,user.id],
+        input.installedOn,input.status,input.parentAssetId,user.id,user.organizationId],
     );
     await initializeSimulatedTelemetry(client, created.rows[0].id, user.id, user.organizationId);
     await audit(client, user, "equipment.created", "engineering_asset", created.rows[0].id, {
@@ -246,7 +247,7 @@ export async function updateEquipment(assetId: string, body: Record<string, unkn
       );
       merged.parentAssetId = parent.rows[0].parent_asset_id;
     }
-    await validateAssetRelations(client, merged, assetId);
+    await validateAssetRelations(client, merged,user.organizationId,assetId);
     const nextStatus = input.status ?? current.status as AssetInput["status"];
     if (nextStatus === "retired" && current.status !== "retired") {
       const open = await client.query(
