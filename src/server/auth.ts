@@ -10,6 +10,7 @@ export type AuthenticatedUser = {
   displayName: string;
   role: UserRole;
   organizationId: string;
+  mfaEnabled: boolean;
 };
 
 const SESSION_COOKIE = "cloudforge_session";
@@ -46,16 +47,19 @@ export function sessionCookieOptions() {
   };
 }
 
-export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number): Promise<{organizationId:string;role:UserRole}> {
+export async function createSession(userId: string, token: string, action = "auth.login", expectedEpoch?: number, mfaVerified = false): Promise<{organizationId:string;role:UserRole}> {
   return inTransaction(async (client) => {
-    const user = await client.query<{ is_active: boolean; session_epoch: number }>(
-      "SELECT is_active, session_epoch FROM users WHERE id = $1 FOR UPDATE",
+    const user = await client.query<{ is_active: boolean; session_epoch: number; mfa_enabled:boolean }>(
+      "SELECT is_active, session_epoch, mfa_enabled FROM users WHERE id = $1 FOR UPDATE",
       [userId],
     );
     if (!user.rows[0]?.is_active || (expectedEpoch !== undefined && user.rows[0].session_epoch !== expectedEpoch)) {
       throw new HttpError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
     }
 
+    if(user.rows[0].mfa_enabled && !mfaVerified) {
+      throw new HttpError(401,"MFA_REQUIRED","Verify your authenticator or recovery code.");
+    }
     const membership = await client.query<{ organization_id: string; role: UserRole }>(
       `SELECT m.organization_id,m.role FROM organization_memberships m
          JOIN organizations o ON o.id=m.organization_id
@@ -68,9 +72,9 @@ export async function createSession(userId: string, token: string, action = "aut
       throw new HttpError(403, "NO_ACTIVE_ORGANIZATION", "No active organization membership is available.");
     }
     await client.query(
-      `INSERT INTO sessions (token_hash, user_id, organization_id, expires_at)
-       VALUES ($1, $2, $3, now() + ($4 * interval '1 second'))`,
-      [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS],
+      `INSERT INTO sessions (token_hash, user_id, organization_id, expires_at,mfa_verified)
+       VALUES ($1, $2, $3, now() + ($4 * interval '1 second'),$5)`,
+      [hashToken(token), userId, membership.rows[0].organization_id, SESSION_TTL_SECONDS,mfaVerified],
     );
     await client.query(
       `INSERT INTO audit_events (actor_user_id, organization_id, action, entity_type, entity_id)
@@ -104,13 +108,14 @@ export async function getAuthenticatedUser(request: Request): Promise<Authentica
 
   const result = await getPool().query<AuthenticatedUser>(
     `SELECT u.id, u.email, u.display_name AS "displayName",
-            m.role, m.organization_id AS "organizationId"
+            m.role, m.organization_id AS "organizationId",u.mfa_enabled AS "mfaEnabled"
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN organization_memberships m ON m.user_id = u.id AND m.organization_id = s.organization_id
        JOIN organizations o ON o.id = s.organization_id
       WHERE s.token_hash = $1 AND s.expires_at > now()
-        AND u.is_active = true AND o.status = 'active'`,
+        AND u.is_active = true AND o.status = 'active'
+        AND (NOT u.mfa_enabled OR s.mfa_verified)`,
     [hashToken(token)],
   );
   return result.rows[0] ?? null;
@@ -167,8 +172,8 @@ export async function switchSessionOrganization(request: Request, organizationId
     if (session.rows[0].organization_id !== organizationId) {
       await client.query("UPDATE sessions SET organization_id=$2 WHERE token_hash=$1", [tokenHash, organizationId]);
       await client.query(
-        `INSERT INTO audit_events (actor_user_id, action, entity_type, entity_id, details)
-         VALUES ($1, 'auth.organization_switched', 'organization', $2, $3)`,
+        `INSERT INTO audit_events (actor_user_id,organization_id, action, entity_type, entity_id, details)
+         VALUES ($1,$2,'auth.organization_switched', 'organization', $2, $3)`,
         [userId, organizationId, JSON.stringify({ from: session.rows[0].organization_id, to: organizationId })],
       );
     }
