@@ -9,6 +9,8 @@ import * as platformInvites from "@/app/api/platform/invitations/route";
 import * as orgInvites from "@/app/api/organizations/invitations/route";
 import * as inviteAcceptance from "@/app/api/organization-invitations/accept/route";
 import * as switchOrganization from "@/app/api/auth/organization/route";
+import * as memberActions from "@/app/api/organizations/members/[id]/route";
+import * as revokeInvite from "@/app/api/organizations/invitations/[id]/route";
 
 let h: Handlers;
 let actors: Actors;
@@ -179,4 +181,90 @@ it("rejects invalid/unknown invitation tokens without creating users",async()=>{
   expect(result.status).toBe(400);
   const user=await testPool().query("SELECT 1 FROM users WHERE email='some-user@example.test'");
   expect(user.rowCount).toBe(0);
+});
+
+it("organization admin can alter a member's role without changing their other company role",async()=>{
+  const adminLogin=await call(h.login.POST,{
+    method:"POST",body:{email:"new-engineer@example.test",password:STRONG_PASSWORD},
+  });
+  expect(adminLogin.status).toBe(200);
+  const userId=(await testPool().query<{id:string}>(
+    "SELECT id FROM users WHERE email=$1",[actors.operator.email],
+  )).rows[0].id;
+  const change=await call(request=>memberActions.PATCH(request,{
+    params:Promise.resolve({id:userId}),
+  }),{method:"PATCH",cookie:adminLogin.sessionCookie,
+    body:{role:"viewer"}});
+  expect(change.status).toBe(200);
+  expect(change.body.role).toBe("viewer");
+  const memberships=await testPool().query<{organization_id:string;role:string}>(
+    "SELECT organization_id,role FROM organization_memberships WHERE user_id=$1",
+    [userId],
+  );
+  expect(memberships.rows).toEqual(expect.arrayContaining([
+    {organization_id:orgA,role:"operator"},
+    {organization_id:orgB,role:"viewer"},
+  ]));
+  const attacker=await call(request=>memberActions.PATCH(request,{
+    params:Promise.resolve({id:adminLogin.body.user.id}),
+  }),{method:"PATCH",cookie:actors.admin.cookie,body:{role:"viewer"}});
+  expect(attacker.status).toBe(404);
+});
+
+it("prevents removal/demotion of the organization's last administrator",async()=>{
+  const adminLogin=await call(h.login.POST,{
+    method:"POST",body:{email:"new-engineer@example.test",password:STRONG_PASSWORD},
+  });
+  const userId=String(adminLogin.body.user.id);
+  const demote=await call(request=>memberActions.PATCH(request,{
+    params:Promise.resolve({id:userId}),
+  }),{method:"PATCH",cookie:adminLogin.sessionCookie,body:{role:"viewer"}});
+  expect(demote.status).toBe(409);
+  expect(demote.body.code).toBe("LAST_ORGANIZATION_ADMIN");
+  const remove=await call(request=>memberActions.DELETE(request,{
+    params:Promise.resolve({id:userId}),
+  }),{method:"DELETE",cookie:adminLogin.sessionCookie});
+  expect(remove.status).toBe(409);
+});
+
+it("removes only one organization's membership and revokes only matching sessions",async()=>{
+  const adminLogin=await call(h.login.POST,{
+    method:"POST",body:{email:"new-engineer@example.test",password:STRONG_PASSWORD},
+  });
+  const memberId=(await testPool().query<{id:string}>(
+    "SELECT id FROM users WHERE email=$1",[actors.operator.email],
+  )).rows[0].id;
+  const removed=await call(request=>memberActions.DELETE(request,{
+    params:Promise.resolve({id:memberId}),
+  }),{method:"DELETE",cookie:adminLogin.sessionCookie});
+  expect(removed.status).toBe(200);
+  expect(removed.body.removed).toBe(true);
+  const remaining=await testPool().query<{organization_id:string}>(
+    "SELECT organization_id FROM organization_memberships WHERE user_id=$1",[memberId],
+  );
+  expect(remaining.rows).toEqual([{organization_id:orgA}]);
+  const originalOrgSession=await testPool().query<{organization_id:string}>(
+    "SELECT organization_id FROM sessions WHERE user_id=$1",[memberId],
+  );
+  expect(originalOrgSession.rows.every(row=>row.organization_id!==orgB)).toBe(true);
+});
+
+it("allows admin revocation of a pending invitation and blocks its token",async()=>{
+  const adminLogin=await call(h.login.POST,{
+    method:"POST",body:{email:"new-engineer@example.test",password:STRONG_PASSWORD},
+  });
+  const pending=(await testPool().query<{id:string}>(
+    "SELECT id FROM organization_invitations WHERE organization_id=$1 AND email='third-user@example.test'",
+    [orgB],
+  )).rows[0];
+  const revoked=await call(request=>revokeInvite.PATCH(request,{
+    params:Promise.resolve({id:pending.id}),
+  }),{method:"PATCH",cookie:adminLogin.sessionCookie});
+  expect(revoked.status).toBe(200);
+  const invite=await testPool().query("SELECT revoked_at FROM organization_invitations WHERE id=$1",[pending.id]);
+  expect(invite.rows[0].revoked_at).toBeInstanceOf(Date);
+  const otherOrgAttempt=await call(request=>revokeInvite.PATCH(request,{
+    params:Promise.resolve({id:pending.id}),
+  }),{method:"PATCH",cookie:actors.admin.cookie});
+  expect(otherOrgAttempt.status).toBe(404);
 });
