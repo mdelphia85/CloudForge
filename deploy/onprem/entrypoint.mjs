@@ -10,13 +10,13 @@ function readSecret(path, label) {
 
 const host = process.env.DB_HOST ?? "postgres";
 const dbName = process.env.DB_NAME ?? "cloudforge";
-const dbUser = process.env.DB_USER ?? "cloudforge";
+const dbUser = process.env.DB_APP_USER ?? "cloudforge_app";
 if (!/^[a-zA-Z0-9_-]{1,63}$/.test(host) ||
     !/^[a-zA-Z0-9_]{1,63}$/.test(dbName) ||
     !/^[a-zA-Z0-9_]{1,63}$/.test(dbUser)) {
   throw new Error("Invalid internal database address, name, or user.");
 }
-const password = readSecret(process.env.DB_PASSWORD_FILE, "Database password");
+const password = readSecret(process.env.DB_APP_PASSWORD_FILE, "Application database password");
 if (password.length < 24) throw new Error("Database password must be at least 24 characters.");
 if (!process.env.APP_ORIGIN) throw new Error("APP_ORIGIN must be explicitly configured.");
 const publicKey = readSecret(process.env.LICENSE_PUBLIC_KEY_FILE, "License public key");
@@ -50,9 +50,6 @@ async function run(args) {
   return code;
 }
 
-const migrated = await run(["scripts/migrate.mjs"]);
-if (migrated !== 0) {
-  console.error("CloudForge schema migration failed; application startup stopped.");
-  process.exit(migrated);
-}
+// A separate one-shot migrator container performs privileged schema changes.
+// This long-running app process only receives restricted database credentials.
 process.exit(await run(["server.js"]));
